@@ -61,11 +61,11 @@ func resourceArmLogicAppTriggerHttpRequest() *schema.Resource {
 				Type:     schema.TypeString,
 				Optional: true,
 				ValidateFunc: validation.StringInSlice([]string{
-					string(http.MethodDelete),
-					string(http.MethodGet),
-					string(http.MethodPatch),
-					string(http.MethodPost),
-					string(http.MethodPut),
+					http.MethodDelete,
+					http.MethodGet,
+					http.MethodPatch,
+					http.MethodPost,
+					http.MethodPut,
 				}, false),
 			},
 
@@ -105,7 +105,7 @@ func resourceArmLogicAppTriggerHttpRequestCreateUpdate(d *schema.ResourceData, m
 
 	logicAppId := d.Get("logic_app_id").(string)
 	name := d.Get("name").(string)
-	if err := resourceLogicAppTriggerUpdate(d, meta, logicAppId, name, trigger); err != nil {
+	if err := resourceLogicAppTriggerUpdate(d, meta, logicAppId, name, trigger, "azurerm_logic_app_trigger_http_request"); err != nil {
 		return err
 	}
 
@@ -113,7 +113,7 @@ func resourceArmLogicAppTriggerHttpRequestCreateUpdate(d *schema.ResourceData, m
 }
 
 func resourceArmLogicAppTriggerHttpRequestRead(d *schema.ResourceData, meta interface{}) error {
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -169,7 +169,7 @@ func resourceArmLogicAppTriggerHttpRequestRead(d *schema.ResourceData, meta inte
 }
 
 func resourceArmLogicAppTriggerHttpRequestDelete(d *schema.ResourceData, meta interface{}) error {
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}

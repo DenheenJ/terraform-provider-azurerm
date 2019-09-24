@@ -21,6 +21,7 @@ import (
 	"context"
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/azure"
+	"github.com/Azure/go-autorest/tracing"
 	"net/http"
 )
 
@@ -48,6 +49,16 @@ func NewEncryptionProtectorsClientWithBaseURI(baseURI string, subscriptionID str
 // serverName - the name of the server.
 // parameters - the requested encryption protector resource state.
 func (client EncryptionProtectorsClient) CreateOrUpdate(ctx context.Context, resourceGroupName string, serverName string, parameters EncryptionProtector) (result EncryptionProtectorsCreateOrUpdateFuture, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/EncryptionProtectorsClient.CreateOrUpdate")
+		defer func() {
+			sc := -1
+			if result.Response() != nil {
+				sc = result.Response().StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
 	req, err := client.CreateOrUpdatePreparer(ctx, resourceGroupName, serverName, parameters)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "sql.EncryptionProtectorsClient", "CreateOrUpdate", nil, "Failure preparing request")
@@ -77,6 +88,8 @@ func (client EncryptionProtectorsClient) CreateOrUpdatePreparer(ctx context.Cont
 		"api-version": APIVersion,
 	}
 
+	parameters.Kind = nil
+	parameters.Location = nil
 	preparer := autorest.CreatePreparer(
 		autorest.AsContentType("application/json; charset=utf-8"),
 		autorest.AsPut(),
@@ -90,13 +103,9 @@ func (client EncryptionProtectorsClient) CreateOrUpdatePreparer(ctx context.Cont
 // CreateOrUpdateSender sends the CreateOrUpdate request. The method will close the
 // http.Response Body if it receives an error.
 func (client EncryptionProtectorsClient) CreateOrUpdateSender(req *http.Request) (future EncryptionProtectorsCreateOrUpdateFuture, err error) {
+	sd := autorest.GetSendDecorators(req.Context(), azure.DoRetryWithRegistration(client.Client))
 	var resp *http.Response
-	resp, err = autorest.SendWithSender(client, req,
-		azure.DoRetryWithRegistration(client.Client))
-	if err != nil {
-		return
-	}
-	err = autorest.Respond(resp, azure.WithErrorUnlessStatusCode(http.StatusOK, http.StatusAccepted))
+	resp, err = autorest.SendWithSender(client, req, sd...)
 	if err != nil {
 		return
 	}
@@ -123,6 +132,16 @@ func (client EncryptionProtectorsClient) CreateOrUpdateResponder(resp *http.Resp
 // from the Azure Resource Manager API or the portal.
 // serverName - the name of the server.
 func (client EncryptionProtectorsClient) Get(ctx context.Context, resourceGroupName string, serverName string) (result EncryptionProtector, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/EncryptionProtectorsClient.Get")
+		defer func() {
+			sc := -1
+			if result.Response.Response != nil {
+				sc = result.Response.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
 	req, err := client.GetPreparer(ctx, resourceGroupName, serverName)
 	if err != nil {
 		err = autorest.NewErrorWithError(err, "sql.EncryptionProtectorsClient", "Get", nil, "Failure preparing request")
@@ -169,8 +188,8 @@ func (client EncryptionProtectorsClient) GetPreparer(ctx context.Context, resour
 // GetSender sends the Get request. The method will close the
 // http.Response Body if it receives an error.
 func (client EncryptionProtectorsClient) GetSender(req *http.Request) (*http.Response, error) {
-	return autorest.SendWithSender(client, req,
-		azure.DoRetryWithRegistration(client.Client))
+	sd := autorest.GetSendDecorators(req.Context(), azure.DoRetryWithRegistration(client.Client))
+	return autorest.SendWithSender(client, req, sd...)
 }
 
 // GetResponder handles the response to the Get request. The method always
@@ -192,6 +211,16 @@ func (client EncryptionProtectorsClient) GetResponder(resp *http.Response) (resu
 // from the Azure Resource Manager API or the portal.
 // serverName - the name of the server.
 func (client EncryptionProtectorsClient) ListByServer(ctx context.Context, resourceGroupName string, serverName string) (result EncryptionProtectorListResultPage, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/EncryptionProtectorsClient.ListByServer")
+		defer func() {
+			sc := -1
+			if result.eplr.Response.Response != nil {
+				sc = result.eplr.Response.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
 	result.fn = client.listByServerNextResults
 	req, err := client.ListByServerPreparer(ctx, resourceGroupName, serverName)
 	if err != nil {
@@ -238,8 +267,8 @@ func (client EncryptionProtectorsClient) ListByServerPreparer(ctx context.Contex
 // ListByServerSender sends the ListByServer request. The method will close the
 // http.Response Body if it receives an error.
 func (client EncryptionProtectorsClient) ListByServerSender(req *http.Request) (*http.Response, error) {
-	return autorest.SendWithSender(client, req,
-		azure.DoRetryWithRegistration(client.Client))
+	sd := autorest.GetSendDecorators(req.Context(), azure.DoRetryWithRegistration(client.Client))
+	return autorest.SendWithSender(client, req, sd...)
 }
 
 // ListByServerResponder handles the response to the ListByServer request. The method always
@@ -256,8 +285,8 @@ func (client EncryptionProtectorsClient) ListByServerResponder(resp *http.Respon
 }
 
 // listByServerNextResults retrieves the next set of results, if any.
-func (client EncryptionProtectorsClient) listByServerNextResults(lastResults EncryptionProtectorListResult) (result EncryptionProtectorListResult, err error) {
-	req, err := lastResults.encryptionProtectorListResultPreparer()
+func (client EncryptionProtectorsClient) listByServerNextResults(ctx context.Context, lastResults EncryptionProtectorListResult) (result EncryptionProtectorListResult, err error) {
+	req, err := lastResults.encryptionProtectorListResultPreparer(ctx)
 	if err != nil {
 		return result, autorest.NewErrorWithError(err, "sql.EncryptionProtectorsClient", "listByServerNextResults", nil, "Failure preparing next results request")
 	}
@@ -278,6 +307,94 @@ func (client EncryptionProtectorsClient) listByServerNextResults(lastResults Enc
 
 // ListByServerComplete enumerates all values, automatically crossing page boundaries as required.
 func (client EncryptionProtectorsClient) ListByServerComplete(ctx context.Context, resourceGroupName string, serverName string) (result EncryptionProtectorListResultIterator, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/EncryptionProtectorsClient.ListByServer")
+		defer func() {
+			sc := -1
+			if result.Response().Response.Response != nil {
+				sc = result.page.Response().Response.Response.StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
 	result.page, err = client.ListByServer(ctx, resourceGroupName, serverName)
+	return
+}
+
+// Revalidate revalidates an existing encryption protector.
+// Parameters:
+// resourceGroupName - the name of the resource group that contains the resource. You can obtain this value
+// from the Azure Resource Manager API or the portal.
+// serverName - the name of the server.
+func (client EncryptionProtectorsClient) Revalidate(ctx context.Context, resourceGroupName string, serverName string) (result EncryptionProtectorsRevalidateFuture, err error) {
+	if tracing.IsEnabled() {
+		ctx = tracing.StartSpan(ctx, fqdn+"/EncryptionProtectorsClient.Revalidate")
+		defer func() {
+			sc := -1
+			if result.Response() != nil {
+				sc = result.Response().StatusCode
+			}
+			tracing.EndSpan(ctx, sc, err)
+		}()
+	}
+	req, err := client.RevalidatePreparer(ctx, resourceGroupName, serverName)
+	if err != nil {
+		err = autorest.NewErrorWithError(err, "sql.EncryptionProtectorsClient", "Revalidate", nil, "Failure preparing request")
+		return
+	}
+
+	result, err = client.RevalidateSender(req)
+	if err != nil {
+		err = autorest.NewErrorWithError(err, "sql.EncryptionProtectorsClient", "Revalidate", result.Response(), "Failure sending request")
+		return
+	}
+
+	return
+}
+
+// RevalidatePreparer prepares the Revalidate request.
+func (client EncryptionProtectorsClient) RevalidatePreparer(ctx context.Context, resourceGroupName string, serverName string) (*http.Request, error) {
+	pathParameters := map[string]interface{}{
+		"encryptionProtectorName": autorest.Encode("path", "current"),
+		"resourceGroupName":       autorest.Encode("path", resourceGroupName),
+		"serverName":              autorest.Encode("path", serverName),
+		"subscriptionId":          autorest.Encode("path", client.SubscriptionID),
+	}
+
+	const APIVersion = "2015-05-01-preview"
+	queryParameters := map[string]interface{}{
+		"api-version": APIVersion,
+	}
+
+	preparer := autorest.CreatePreparer(
+		autorest.AsPost(),
+		autorest.WithBaseURL(client.BaseURI),
+		autorest.WithPathParameters("/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Sql/servers/{serverName}/encryptionProtector/{encryptionProtectorName}/revalidate", pathParameters),
+		autorest.WithQueryParameters(queryParameters))
+	return preparer.Prepare((&http.Request{}).WithContext(ctx))
+}
+
+// RevalidateSender sends the Revalidate request. The method will close the
+// http.Response Body if it receives an error.
+func (client EncryptionProtectorsClient) RevalidateSender(req *http.Request) (future EncryptionProtectorsRevalidateFuture, err error) {
+	sd := autorest.GetSendDecorators(req.Context(), azure.DoRetryWithRegistration(client.Client))
+	var resp *http.Response
+	resp, err = autorest.SendWithSender(client, req, sd...)
+	if err != nil {
+		return
+	}
+	future.Future, err = azure.NewFutureFromResponse(resp)
+	return
+}
+
+// RevalidateResponder handles the response to the Revalidate request. The method always
+// closes the http.Response Body.
+func (client EncryptionProtectorsClient) RevalidateResponder(resp *http.Response) (result autorest.Response, err error) {
+	err = autorest.Respond(
+		resp,
+		client.ByInspecting(),
+		azure.WithErrorUnlessStatusCode(http.StatusOK, http.StatusAccepted),
+		autorest.ByClosing())
+	result.Response = resp
 	return
 }

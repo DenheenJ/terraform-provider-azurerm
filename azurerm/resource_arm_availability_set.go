@@ -5,18 +5,22 @@ import (
 	"log"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-06-01/compute"
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-07-01/compute"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/helper/validation"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/suppress"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/tags"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 func resourceArmAvailabilitySet() *schema.Resource {
 	return &schema.Resource{
-		Create: resourceArmAvailabilitySetCreate,
+		Create: resourceArmAvailabilitySetCreateUpdate,
 		Read:   resourceArmAvailabilitySetRead,
-		Update: resourceArmAvailabilitySetCreate,
+		Update: resourceArmAvailabilitySetCreateUpdate,
 		Delete: resourceArmAvailabilitySetDelete,
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
@@ -29,9 +33,9 @@ func resourceArmAvailabilitySet() *schema.Resource {
 				ForceNew: true,
 			},
 
-			"resource_group_name": resourceGroupNameSchema(),
+			"resource_group_name": azure.SchemaResourceGroupName(),
 
-			"location": locationSchema(),
+			"location": azure.SchemaLocation(),
 
 			"platform_update_domain_count": {
 				Type:         schema.TypeInt,
@@ -56,13 +60,25 @@ func resourceArmAvailabilitySet() *schema.Resource {
 				ForceNew: true,
 			},
 
-			"tags": tagsSchema(),
+			"proximity_placement_group_id": {
+				Type:     schema.TypeString,
+				Optional: true,
+				ForceNew: true,
+
+				// We have to ignore case due to incorrect capitalisation of resource group name in
+				// proximity placement group ID in the response we get from the API request
+				//
+				// todo can be removed when https://github.com/Azure/azure-sdk-for-go/issues/5699 is fixed
+				DiffSuppressFunc: suppress.CaseDifference,
+			},
+
+			"tags": tags.Schema(),
 		},
 	}
 }
 
-func resourceArmAvailabilitySetCreate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).availSetClient
+func resourceArmAvailabilitySetCreateUpdate(d *schema.ResourceData, meta interface{}) error {
+	client := meta.(*ArmClient).compute.AvailabilitySetsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	log.Printf("[INFO] preparing arguments for AzureRM Availability Set creation.")
@@ -70,7 +86,7 @@ func resourceArmAvailabilitySetCreate(d *schema.ResourceData, meta interface{}) 
 	name := d.Get("name").(string)
 	resGroup := d.Get("resource_group_name").(string)
 
-	if requireResourcesToBeImported && d.IsNewResource() {
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
 		existing, err := client.Get(ctx, resGroup, name)
 		if err != nil {
 			if !utils.ResponseWasNotFound(existing.Response) {
@@ -83,11 +99,11 @@ func resourceArmAvailabilitySetCreate(d *schema.ResourceData, meta interface{}) 
 		}
 	}
 
-	location := azureRMNormalizeLocation(d.Get("location").(string))
+	location := azure.NormalizeLocation(d.Get("location").(string))
 	updateDomainCount := d.Get("platform_update_domain_count").(int)
 	faultDomainCount := d.Get("platform_fault_domain_count").(int)
 	managed := d.Get("managed").(bool)
-	tags := d.Get("tags").(map[string]interface{})
+	t := d.Get("tags").(map[string]interface{})
 
 	availSet := compute.AvailabilitySet{
 		Name:     &name,
@@ -96,7 +112,13 @@ func resourceArmAvailabilitySetCreate(d *schema.ResourceData, meta interface{}) 
 			PlatformFaultDomainCount:  utils.Int32(int32(faultDomainCount)),
 			PlatformUpdateDomainCount: utils.Int32(int32(updateDomainCount)),
 		},
-		Tags: expandTags(tags),
+		Tags: tags.Expand(t),
+	}
+
+	if v, ok := d.GetOk("proximity_placement_group_id"); ok {
+		availSet.AvailabilitySetProperties.ProximityPlacementGroup = &compute.SubResource{
+			ID: utils.String(v.(string)),
+		}
 	}
 
 	if managed {
@@ -117,10 +139,10 @@ func resourceArmAvailabilitySetCreate(d *schema.ResourceData, meta interface{}) 
 }
 
 func resourceArmAvailabilitySetRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).availSetClient
+	client := meta.(*ArmClient).compute.AvailabilitySetsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -136,29 +158,32 @@ func resourceArmAvailabilitySetRead(d *schema.ResourceData, meta interface{}) er
 		return fmt.Errorf("Error making Read request on Azure Availability Set %q (Resource Group %q): %+v", name, resGroup, err)
 	}
 
-	availSet := *resp.AvailabilitySetProperties
 	d.Set("name", resp.Name)
 	d.Set("resource_group_name", resGroup)
 	if location := resp.Location; location != nil {
-		d.Set("location", azureRMNormalizeLocation(*location))
+		d.Set("location", azure.NormalizeLocation(*location))
 	}
-	d.Set("platform_update_domain_count", availSet.PlatformUpdateDomainCount)
-	d.Set("platform_fault_domain_count", availSet.PlatformFaultDomainCount)
-
 	if resp.Sku != nil && resp.Sku.Name != nil {
 		d.Set("managed", strings.EqualFold(*resp.Sku.Name, "Aligned"))
 	}
 
-	flattenAndSetTags(d, resp.Tags)
+	if props := resp.AvailabilitySetProperties; props != nil {
+		d.Set("platform_update_domain_count", props.PlatformUpdateDomainCount)
+		d.Set("platform_fault_domain_count", props.PlatformFaultDomainCount)
 
-	return nil
+		if proximityPlacementGroup := props.ProximityPlacementGroup; proximityPlacementGroup != nil {
+			d.Set("proximity_placement_group_id", proximityPlacementGroup.ID)
+		}
+	}
+
+	return tags.FlattenAndSet(d, resp.Tags)
 }
 
 func resourceArmAvailabilitySetDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).availSetClient
+	client := meta.(*ArmClient).compute.AvailabilitySetsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}

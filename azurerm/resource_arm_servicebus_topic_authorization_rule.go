@@ -8,6 +8,8 @@ import (
 
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
@@ -44,7 +46,7 @@ func resourceArmServiceBusTopicAuthorizationRule() *schema.Resource {
 				ValidateFunc: azure.ValidateServiceBusTopicName(),
 			},
 
-			"resource_group_name": resourceGroupNameSchema(),
+			"resource_group_name": azure.SchemaResourceGroupName(),
 		}),
 
 		CustomizeDiff: azure.ServiceBusAuthorizationRuleCustomizeDiff,
@@ -52,7 +54,7 @@ func resourceArmServiceBusTopicAuthorizationRule() *schema.Resource {
 }
 
 func resourceArmServiceBusTopicAuthorizationRuleCreateUpdate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).serviceBusTopicsClient
+	client := meta.(*ArmClient).ServiceBus.TopicsClient
 	ctx := meta.(*ArmClient).StopContext
 	log.Printf("[INFO] preparing arguments for AzureRM ServiceBus Topic Authorization Rule creation.")
 
@@ -60,6 +62,19 @@ func resourceArmServiceBusTopicAuthorizationRuleCreateUpdate(d *schema.ResourceD
 	namespaceName := d.Get("namespace_name").(string)
 	topicName := d.Get("topic_name").(string)
 	resourceGroup := d.Get("resource_group_name").(string)
+
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
+		existing, err := client.GetAuthorizationRule(ctx, resourceGroup, namespaceName, topicName, name)
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing ServiceBus Topic Authorization Rule %q (Resource Group %q): %+v", name, resourceGroup, err)
+			}
+		}
+
+		if existing.ID != nil && *existing.ID != "" {
+			return tf.ImportAsExistsError("azurerm_servicebus_topic_authorization_rule", *existing.ID)
+		}
+	}
 
 	parameters := servicebus.SBAuthorizationRule{
 		Name: &name,
@@ -74,7 +89,7 @@ func resourceArmServiceBusTopicAuthorizationRuleCreateUpdate(d *schema.ResourceD
 
 	read, err := client.GetAuthorizationRule(ctx, resourceGroup, namespaceName, topicName, name)
 	if err != nil {
-		return err
+		return fmt.Errorf("Error getting ServiceBus Topic Authorization Rule %q (Resource Group %q): %+v", name, resourceGroup, err)
 	}
 
 	if read.ID == nil {
@@ -87,10 +102,10 @@ func resourceArmServiceBusTopicAuthorizationRuleCreateUpdate(d *schema.ResourceD
 }
 
 func resourceArmServiceBusTopicAuthorizationRuleRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).serviceBusTopicsClient
+	client := meta.(*ArmClient).ServiceBus.TopicsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -135,10 +150,10 @@ func resourceArmServiceBusTopicAuthorizationRuleRead(d *schema.ResourceData, met
 }
 
 func resourceArmServiceBusTopicAuthorizationRuleDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).serviceBusTopicsClient
+	client := meta.(*ArmClient).ServiceBus.TopicsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}

@@ -5,15 +5,17 @@ import (
 	"os"
 	"testing"
 
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-08-01/network"
-	"github.com/hashicorp/terraform/helper/acctest"
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2019-06-01/network"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 )
 
 func TestAccAzureRMLoadBalancerProbe_basic(t *testing.T) {
 	var lb network.LoadBalancer
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	probeName := fmt.Sprintf("probe-%d", ri)
 
 	subscriptionID := os.Getenv("ARM_SUBSCRIPTION_ID")
@@ -46,9 +48,47 @@ func TestAccAzureRMLoadBalancerProbe_basic(t *testing.T) {
 	})
 }
 
+func TestAccAzureRMLoadBalancerProbe_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
+
+	var lb network.LoadBalancer
+	ri := tf.AccRandTimeInt()
+	probeName := fmt.Sprintf("probe-%d", ri)
+	location := testLocation()
+
+	subscriptionID := os.Getenv("ARM_SUBSCRIPTION_ID")
+	probeId := fmt.Sprintf(
+		"/subscriptions/%s/resourceGroups/acctestRG-%d/providers/Microsoft.Network/loadBalancers/arm-test-loadbalancer-%d/probes/%s",
+		subscriptionID, ri, ri, probeName)
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMLoadBalancerDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMLoadBalancerProbe_basic(ri, probeName, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMLoadBalancerExists("azurerm_lb.test", &lb),
+					testCheckAzureRMLoadBalancerProbeExists(probeName, &lb),
+					resource.TestCheckResourceAttr(
+						"azurerm_lb_probe.test", "id", probeId),
+				),
+			},
+			{
+				Config:      testAccAzureRMLoadBalancerProbe_requiresImport(ri, probeName, location),
+				ExpectError: testRequiresImportError("azurerm_lb_probe"),
+			},
+		},
+	})
+}
+
 func TestAccAzureRMLoadBalancerProbe_removal(t *testing.T) {
 	var lb network.LoadBalancer
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	probeName := fmt.Sprintf("probe-%d", ri)
 	location := testLocation()
 
@@ -77,9 +117,9 @@ func TestAccAzureRMLoadBalancerProbe_removal(t *testing.T) {
 
 func TestAccAzureRMLoadBalancerProbe_update(t *testing.T) {
 	var lb network.LoadBalancer
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	probeName := fmt.Sprintf("probe-%d", ri)
-	probe2Name := fmt.Sprintf("probe-%d", acctest.RandInt())
+	probe2Name := fmt.Sprintf("probe-%d", tf.AccRandTimeInt())
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -110,7 +150,7 @@ func TestAccAzureRMLoadBalancerProbe_update(t *testing.T) {
 
 func TestAccAzureRMLoadBalancerProbe_updateProtocol(t *testing.T) {
 	var lb network.LoadBalancer
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	probeName := fmt.Sprintf("probe-%d", ri)
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -138,43 +178,9 @@ func TestAccAzureRMLoadBalancerProbe_updateProtocol(t *testing.T) {
 	})
 }
 
-func TestAccAzureRMLoadBalancerProbe_reapply(t *testing.T) {
-	var lb network.LoadBalancer
-	ri := acctest.RandInt()
-	probeName := fmt.Sprintf("probe-%d", ri)
-
-	deleteProbeState := func(s *terraform.State) error {
-		return s.Remove("azurerm_lb_probe.test")
-	}
-
-	resource.ParallelTest(t, resource.TestCase{
-		PreCheck:     func() { testAccPreCheck(t) },
-		Providers:    testAccProviders,
-		CheckDestroy: testCheckAzureRMLoadBalancerDestroy,
-		Steps: []resource.TestStep{
-			{
-				Config: testAccAzureRMLoadBalancerProbe_basic(ri, probeName, testLocation()),
-				Check: resource.ComposeTestCheckFunc(
-					testCheckAzureRMLoadBalancerExists("azurerm_lb.test", &lb),
-					testCheckAzureRMLoadBalancerProbeExists(probeName, &lb),
-					deleteProbeState,
-				),
-				ExpectNonEmptyPlan: true,
-			},
-			{
-				Config: testAccAzureRMLoadBalancerProbe_basic(ri, probeName, testLocation()),
-				Check: resource.ComposeTestCheckFunc(
-					testCheckAzureRMLoadBalancerExists("azurerm_lb.test", &lb),
-					testCheckAzureRMLoadBalancerProbeExists(probeName, &lb),
-				),
-			},
-		},
-	})
-}
-
 func TestAccAzureRMLoadBalancerProbe_disappears(t *testing.T) {
 	var lb network.LoadBalancer
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	probeName := fmt.Sprintf("probe-%d", ri)
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -219,7 +225,7 @@ func testCheckAzureRMLoadBalancerProbeNotExists(natRuleName string, lb *network.
 
 func testCheckAzureRMLoadBalancerProbeDisappears(addressPoolName string, lb *network.LoadBalancer) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
-		client := testAccProvider.Meta().(*ArmClient).loadBalancerClient
+		client := testAccProvider.Meta().(*ArmClient).network.LoadBalancersClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		_, i, exists := findLoadBalancerProbeByName(lb, addressPoolName)
@@ -231,7 +237,7 @@ func testCheckAzureRMLoadBalancerProbeDisappears(addressPoolName string, lb *net
 		probes := append(currentProbes[:i], currentProbes[i+1:]...)
 		lb.LoadBalancerPropertiesFormat.Probes = &probes
 
-		id, err := parseAzureResourceID(*lb.ID)
+		id, err := azure.ParseAzureResourceID(*lb.ID)
 		if err != nil {
 			return err
 		}
@@ -258,10 +264,10 @@ resource "azurerm_resource_group" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "test-ip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "static"
+  name                = "test-ip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
 }
 
 resource "azurerm_lb" "test" {
@@ -285,6 +291,21 @@ resource "azurerm_lb_probe" "test" {
 `, rInt, location, rInt, rInt, rInt, probeName)
 }
 
+func testAccAzureRMLoadBalancerProbe_requiresImport(rInt int, name string, location string) string {
+	template := testAccAzureRMLoadBalancerProbe_basic(rInt, name, location)
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_lb_probe" "import" {
+  name                = "${azurerm_lb_probe.test.name}"
+  loadbalancer_id     = "${azurerm_lb_probe.test.loadbalancer_id}"
+  location            = "${azurerm_lb_probe.test.location}"
+  resource_group_name = "${azurerm_lb_probe.test.resource_group_name}"
+  port                = 22
+}
+`, template)
+}
+
 func testAccAzureRMLoadBalancerProbe_removal(rInt int, location string) string {
 	return fmt.Sprintf(`
 resource "azurerm_resource_group" "test" {
@@ -293,10 +314,10 @@ resource "azurerm_resource_group" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "test-ip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "static"
+  name                = "test-ip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
 }
 
 resource "azurerm_lb" "test" {
@@ -320,10 +341,10 @@ resource "azurerm_resource_group" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "test-ip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "static"
+  name                = "test-ip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
 }
 
 resource "azurerm_lb" "test" {
@@ -363,10 +384,10 @@ resource "azurerm_resource_group" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "test-ip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "static"
+  name                = "test-ip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
 }
 
 resource "azurerm_lb" "test" {
@@ -406,10 +427,10 @@ resource "azurerm_resource_group" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "test-ip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "static"
+  name                = "test-ip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
 }
 
 resource "azurerm_lb" "test" {
@@ -443,10 +464,10 @@ resource "azurerm_resource_group" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "test-ip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "static"
+  name                = "test-ip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
 }
 
 resource "azurerm_lb" "test" {

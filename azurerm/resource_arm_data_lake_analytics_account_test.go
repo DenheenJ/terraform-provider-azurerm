@@ -6,14 +6,15 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 )
 
 func TestAccAzureRMDataLakeAnalyticsAccount_basic(t *testing.T) {
 	resourceName := "azurerm_data_lake_analytics_account.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -36,9 +37,38 @@ func TestAccAzureRMDataLakeAnalyticsAccount_basic(t *testing.T) {
 	})
 }
 
+func TestAccAzureRMDataLakeAnalyticsAccount_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
+
+	resourceName := "azurerm_data_lake_analytics_account.test"
+	ri := tf.AccRandTimeInt()
+	location := testLocation()
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMDataLakeAnalyticsAccountDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMDataLakeAnalyticsAccount_basic(ri, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMDataLakeAnalyticsAccountExists(resourceName),
+				),
+			},
+			{
+				Config:      testAccAzureRMDataLakeAnalyticsAccount_requiresImport(ri, location),
+				ExpectError: testRequiresImportError("azurerm_data_lake_analytics_account"),
+			},
+		},
+	})
+}
+
 func TestAccAzureRMDataLakeAnalyticsAccount_tier(t *testing.T) {
 	resourceName := "azurerm_data_lake_analytics_account.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -63,7 +93,7 @@ func TestAccAzureRMDataLakeAnalyticsAccount_tier(t *testing.T) {
 
 func TestAccAzureRMDataLakeAnalyticsAccount_withTags(t *testing.T) {
 	resourceName := "azurerm_data_lake_analytics_account.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -93,21 +123,21 @@ func TestAccAzureRMDataLakeAnalyticsAccount_withTags(t *testing.T) {
 	})
 }
 
-func testCheckAzureRMDataLakeAnalyticsAccountExists(name string) resource.TestCheckFunc {
+func testCheckAzureRMDataLakeAnalyticsAccountExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		accountName := rs.Primary.Attributes["name"]
 		resourceGroup, hasResourceGroup := rs.Primary.Attributes["resource_group_name"]
 		if !hasResourceGroup {
-			return fmt.Errorf("Bad: no resource group found in state for data lake store: %s", name)
+			return fmt.Errorf("Bad: no resource group found in state for data lake store: %s", accountName)
 		}
 
-		conn := testAccProvider.Meta().(*ArmClient).dataLakeAnalyticsAccountClient
+		conn := testAccProvider.Meta().(*ArmClient).datalake.AnalyticsAccountsClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		resp, err := conn.Get(ctx, resourceGroup, accountName)
@@ -124,7 +154,7 @@ func testCheckAzureRMDataLakeAnalyticsAccountExists(name string) resource.TestCh
 }
 
 func testCheckAzureRMDataLakeAnalyticsAccountDestroy(s *terraform.State) error {
-	conn := testAccProvider.Meta().(*ArmClient).dataLakeAnalyticsAccountClient
+	conn := testAccProvider.Meta().(*ArmClient).datalake.AnalyticsAccountsClient
 	ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 	for _, rs := range s.RootModule().Resources {
@@ -151,6 +181,7 @@ func testCheckAzureRMDataLakeAnalyticsAccountDestroy(s *terraform.State) error {
 }
 
 func testAccAzureRMDataLakeAnalyticsAccount_basic(rInt int, location string) string {
+	template := testAccAzureRMDataLakeStore_basic(rInt, location)
 	return fmt.Sprintf(`
 %s
 
@@ -161,10 +192,25 @@ resource "azurerm_data_lake_analytics_account" "test" {
 
   default_store_account_name = "${azurerm_data_lake_store.test.name}"
 }
-`, testAccAzureRMDataLakeStore_basic(rInt, location), strconv.Itoa(rInt)[0:15])
+`, template, strconv.Itoa(rInt)[2:17])
+}
+
+func testAccAzureRMDataLakeAnalyticsAccount_requiresImport(rInt int, location string) string {
+	template := testAccAzureRMDataLakeAnalyticsAccount_basic(rInt, location)
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_data_lake_analytics_account" "import" {
+  name                       = "${azurerm_data_lake_analytics_account.test.name}"
+  resource_group_name        = "${azurerm_data_lake_analytics_account.test.resource_group_name}"
+  location                   = "${azurerm_data_lake_analytics_account.test.location}"
+  default_store_account_name = "${azurerm_data_lake_analytics_account.test.default_store_account_name}"
+}
+`, template)
 }
 
 func testAccAzureRMDataLakeAnalyticsAccount_tier(rInt int, location string) string {
+	template := testAccAzureRMDataLakeStore_basic(rInt, location)
 	return fmt.Sprintf(`
 %s
 
@@ -173,14 +219,15 @@ resource "azurerm_data_lake_analytics_account" "test" {
   resource_group_name = "${azurerm_resource_group.test.name}"
   location            = "${azurerm_resource_group.test.location}"
 
-  tier                = "Commitment_100AUHours"
+  tier = "Commitment_100AUHours"
 
   default_store_account_name = "${azurerm_data_lake_store.test.name}"
 }
-`, testAccAzureRMDataLakeStore_basic(rInt, location), strconv.Itoa(rInt)[0:15])
+`, template, strconv.Itoa(rInt)[2:17])
 }
 
 func testAccAzureRMDataLakeAnalyticsAccount_withTags(rInt int, location string) string {
+	template := testAccAzureRMDataLakeStore_basic(rInt, location)
 	return fmt.Sprintf(`
 %s
 
@@ -188,18 +235,19 @@ resource "azurerm_data_lake_analytics_account" "test" {
   name                = "acctest%s"
   resource_group_name = "${azurerm_resource_group.test.name}"
   location            = "${azurerm_resource_group.test.location}"
-  
+
   default_store_account_name = "${azurerm_data_lake_store.test.name}"
 
-  tags {
+  tags = {
     environment = "Production"
     cost_center = "MSFT"
   }
 }
-`, testAccAzureRMDataLakeStore_basic(rInt, location), strconv.Itoa(rInt)[0:15])
+`, template, strconv.Itoa(rInt)[2:17])
 }
 
 func testAccAzureRMDataLakeAnalyticsAccount_withTagsUpdate(rInt int, location string) string {
+	template := testAccAzureRMDataLakeStore_basic(rInt, location)
 	return fmt.Sprintf(`
 %s
 
@@ -207,12 +255,12 @@ resource "azurerm_data_lake_analytics_account" "test" {
   name                = "acctest%s"
   resource_group_name = "${azurerm_resource_group.test.name}"
   location            = "${azurerm_resource_group.test.location}"
-  
+
   default_store_account_name = "${azurerm_data_lake_store.test.name}"
 
-  tags {
+  tags = {
     environment = "staging"
   }
 }
-`, testAccAzureRMDataLakeStore_basic(rInt, location), strconv.Itoa(rInt)[0:15])
+`, template, strconv.Itoa(rInt)[2:17])
 }

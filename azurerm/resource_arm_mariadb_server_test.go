@@ -4,15 +4,16 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 func TestAccAzureRMMariaDbServer_basic(t *testing.T) {
 	resourceName := "azurerm_mariadb_server.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	config := testAccAzureRMMariaDbServer_basic(ri, testLocation())
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -41,9 +42,38 @@ func TestAccAzureRMMariaDbServer_basic(t *testing.T) {
 	})
 }
 
+func TestAccAzureRMMariaDbServer_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
+
+	resourceName := "azurerm_mariadb_server.test"
+	ri := tf.AccRandTimeInt()
+	location := testLocation()
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMMariaDbServerDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMMariaDbServer_basic(ri, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMMariaDbServerExists(resourceName),
+				),
+			},
+			{
+				Config:      testAccAzureRMMariaDbServer_requiresImport(ri, location),
+				ExpectError: testRequiresImportError("azurerm_mariadb_server"),
+			},
+		},
+	})
+}
+
 func TestAccAzureRMMariaDbServer_basicMaxStorage(t *testing.T) {
 	resourceName := "azurerm_mariadb_server.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	config := testAccAzureRMMariaDbServer_basicMaxStorage(ri, testLocation())
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -74,7 +104,7 @@ func TestAccAzureRMMariaDbServer_basicMaxStorage(t *testing.T) {
 
 func TestAccAzureRMMariaDbServer_generalPurpose(t *testing.T) {
 	resourceName := "azurerm_mariadb_server.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	config := testAccAzureRMMariaDbServer_generalPurpose(ri, testLocation())
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -102,7 +132,7 @@ func TestAccAzureRMMariaDbServer_generalPurpose(t *testing.T) {
 
 func TestAccAzureRMMariaDbServer_memoryOptimized(t *testing.T) {
 	resourceName := "azurerm_mariadb_server.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	config := testAccAzureRMMariaDbServer_memoryOptimizedGeoRedundant(ri, testLocation())
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -130,7 +160,7 @@ func TestAccAzureRMMariaDbServer_memoryOptimized(t *testing.T) {
 
 func TestAccAzureRMMariaDbServer_updatePassword(t *testing.T) {
 	resourceName := "azurerm_mariadb_server.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	location := testLocation()
 	config := testAccAzureRMMariaDbServer_basic(ri, location)
 	updatedConfig := testAccAzureRMMariaDbServer_basicUpdatedPassword(ri, location)
@@ -158,7 +188,7 @@ func TestAccAzureRMMariaDbServer_updatePassword(t *testing.T) {
 
 func TestAccAzureRMMariaDbServer_updated(t *testing.T) {
 	resourceName := "azurerm_mariadb_server.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	location := testLocation()
 	config := testAccAzureRMMariaDbServer_basic(ri, location)
 	updatedConfig := testAccAzureRMMariaDbServer_basicUpdated(ri, location)
@@ -194,7 +224,7 @@ func TestAccAzureRMMariaDbServer_updated(t *testing.T) {
 
 func TestAccAzureRMMariaDbServer_updateSKU(t *testing.T) {
 	resourceName := "azurerm_mariadb_server.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	location := testLocation()
 	config := testAccAzureRMMariaDbServer_generalPurpose(ri, location)
 	updatedConfig := testAccAzureRMMariaDbServer_memoryOptimized(ri, location)
@@ -232,7 +262,35 @@ func TestAccAzureRMMariaDbServer_updateSKU(t *testing.T) {
 	})
 }
 
-//
+func TestAccAzureRMMariaDbServer_storageAutogrow(t *testing.T) {
+	resourceName := "azurerm_mariadb_server.test"
+	ri := tf.AccRandTimeInt()
+	location := testLocation()
+	config := testAccAzureRMMariaDbServer_basic(ri, location)
+	updatedConfig := testAccAzureRMMariaDbServer_storageAutogrowUpdated(ri, location)
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMMariaDbServerDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMMariaDbServerExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "storage_profile.0.auto_grow", "Enabled"),
+				),
+			},
+			{
+				Config: updatedConfig,
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMMariaDbServerExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "storage_profile.0.auto_grow", "Disabled"),
+				),
+			},
+		},
+	})
+}
 
 func testCheckAzureRMMariaDbServerExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
@@ -248,7 +306,7 @@ func testCheckAzureRMMariaDbServerExists(resourceName string) resource.TestCheck
 			return fmt.Errorf("Bad: no resource group found in state for MariaDB Server: %s", name)
 		}
 
-		client := testAccProvider.Meta().(*ArmClient).mariadbServersClient
+		client := testAccProvider.Meta().(*ArmClient).mariadb.ServersClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		resp, err := client.Get(ctx, resourceGroup, name)
@@ -265,7 +323,7 @@ func testCheckAzureRMMariaDbServerExists(resourceName string) resource.TestCheck
 }
 
 func testCheckAzureRMMariaDbServerDestroy(s *terraform.State) error {
-	client := testAccProvider.Meta().(*ArmClient).mariadbServersClient
+	client := testAccProvider.Meta().(*ArmClient).mariadb.ServersClient
 	ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 	for _, rs := range s.RootModule().Resources {
@@ -322,6 +380,37 @@ resource "azurerm_mariadb_server" "test" {
   ssl_enforcement              = "Enabled"
 }
 `, rInt, location, rInt)
+}
+
+func testAccAzureRMMariaDbServer_requiresImport(rInt int, location string) string {
+	template := testAccAzureRMMariaDbServer_basic(rInt, location)
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_mariadb_server" "import" {
+  name                = "${azurerm_mariadb_server.test.name}"
+  location            = "${azurerm_mariadb_server.test.location}"
+  resource_group_name = "${azurerm_mariadb_server.test.resource_group_name}"
+
+  sku {
+    name     = "B_Gen5_2"
+    capacity = 2
+    tier     = "Basic"
+    family   = "Gen5"
+  }
+
+  storage_profile {
+    storage_mb            = 51200
+    backup_retention_days = 7
+    geo_redundant_backup  = "Disabled"
+  }
+
+  administrator_login          = "acctestun"
+  administrator_login_password = "H@Sh1CoR3!"
+  version                      = "10.2"
+  ssl_enforcement              = "Enabled"
+}
+`, template)
 }
 
 func testAccAzureRMMariaDbServer_basicUpdatedPassword(rInt int, location string) string {
@@ -406,7 +495,7 @@ resource "azurerm_mariadb_server" "test" {
     name     = "B_Gen5_2"
     capacity = 2
     tier     = "Basic"
-		family   = "Gen5"
+    family   = "Gen5"
   }
 
   storage_profile {
@@ -512,6 +601,40 @@ resource "azurerm_mariadb_server" "test" {
     storage_mb            = 4096000
     backup_retention_days = 7
     geo_redundant_backup  = "Enabled"
+  }
+
+  administrator_login          = "acctestun"
+  administrator_login_password = "H@Sh1CoR3!"
+  version                      = "10.2"
+  ssl_enforcement              = "Enabled"
+}
+`, rInt, location, rInt)
+}
+
+func testAccAzureRMMariaDbServer_storageAutogrowUpdated(rInt int, location string) string {
+	return fmt.Sprintf(`
+resource "azurerm_resource_group" "test" {
+  name     = "acctestRG-%d"
+  location = "%s"
+}
+
+resource "azurerm_mariadb_server" "test" {
+  name                = "acctestmariadbsvr-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+
+  sku {
+    name     = "B_Gen5_2"
+    capacity = 2
+    tier     = "Basic"
+    family   = "Gen5"
+  }
+
+  storage_profile {
+    storage_mb            = 51200
+    backup_retention_days = 7
+    geo_redundant_backup  = "Disabled"
+	auto_grow      		  = "Disabled"
   }
 
   administrator_login          = "acctestun"

@@ -6,6 +6,10 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/services/preview/dns/mgmt/2018-03-01-preview/dns"
 	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/tags"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
@@ -26,7 +30,7 @@ func resourceArmDnsARecord() *schema.Resource {
 				ForceNew: true,
 			},
 
-			"resource_group_name": resourceGroupNameSchema(),
+			"resource_group_name": azure.SchemaResourceGroupName(),
 
 			"zone_name": {
 				Type:     schema.TypeString,
@@ -45,40 +49,53 @@ func resourceArmDnsARecord() *schema.Resource {
 				Required: true,
 			},
 
-			"tags": tagsSchema(),
+			"tags": tags.Schema(),
 		},
 	}
 }
 
 func resourceArmDnsARecordCreateUpdate(d *schema.ResourceData, meta interface{}) error {
-	dnsClient := meta.(*ArmClient).dnsClient
+	client := meta.(*ArmClient).dns.RecordSetsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	name := d.Get("name").(string)
 	resGroup := d.Get("resource_group_name").(string)
 	zoneName := d.Get("zone_name").(string)
-	ttl := int64(d.Get("ttl").(int))
-	tags := d.Get("tags").(map[string]interface{})
 
-	records, err := expandAzureRmDnsARecords(d)
-	if err != nil {
-		return err
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
+		existing, err := client.Get(ctx, resGroup, zoneName, name, dns.A)
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing DNS A Record %q (Zone %q / Resource Group %q): %s", name, zoneName, resGroup, err)
+			}
+		}
+
+		if existing.ID != nil && *existing.ID != "" {
+			return tf.ImportAsExistsError("azurerm_dns_a_record", *existing.ID)
+		}
 	}
+
+	ttl := int64(d.Get("ttl").(int))
+	t := d.Get("tags").(map[string]interface{})
 
 	parameters := dns.RecordSet{
 		Name: &name,
 		RecordSetProperties: &dns.RecordSetProperties{
-			Metadata: expandTags(tags),
+			Metadata: tags.Expand(t),
 			TTL:      &ttl,
-			ARecords: &records,
+			ARecords: expandAzureRmDnsARecords(d),
 		},
 	}
 
 	eTag := ""
 	ifNoneMatch := "" // set to empty to allow updates to records after creation
-	resp, err := dnsClient.CreateOrUpdate(ctx, resGroup, zoneName, name, dns.A, parameters, eTag, ifNoneMatch)
+	if _, err := client.CreateOrUpdate(ctx, resGroup, zoneName, name, dns.A, parameters, eTag, ifNoneMatch); err != nil {
+		return fmt.Errorf("Error creating/updating DNS A Record %q (Zone %q / Resource Group %q): %s", name, zoneName, resGroup, err)
+	}
+
+	resp, err := client.Get(ctx, resGroup, zoneName, name, dns.A)
 	if err != nil {
-		return err
+		return fmt.Errorf("Error retrieving DNS A Record %q (Zone %q / Resource Group %q): %s", name, zoneName, resGroup, err)
 	}
 
 	if resp.ID == nil {
@@ -91,10 +108,10 @@ func resourceArmDnsARecordCreateUpdate(d *schema.ResourceData, meta interface{})
 }
 
 func resourceArmDnsARecordRead(d *schema.ResourceData, meta interface{}) error {
-	dnsClient := meta.(*ArmClient).dnsClient
+	dnsClient := meta.(*ArmClient).dns.RecordSetsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -120,16 +137,14 @@ func resourceArmDnsARecordRead(d *schema.ResourceData, meta interface{}) error {
 	if err := d.Set("records", flattenAzureRmDnsARecords(resp.ARecords)); err != nil {
 		return err
 	}
-	flattenAndSetTags(d, resp.Metadata)
-
-	return nil
+	return tags.FlattenAndSet(d, resp.Metadata)
 }
 
 func resourceArmDnsARecordDelete(d *schema.ResourceData, meta interface{}) error {
-	dnsClient := meta.(*ArmClient).dnsClient
+	dnsClient := meta.(*ArmClient).dns.RecordSetsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -158,7 +173,7 @@ func flattenAzureRmDnsARecords(records *[]dns.ARecord) []string {
 	return results
 }
 
-func expandAzureRmDnsARecords(d *schema.ResourceData) ([]dns.ARecord, error) {
+func expandAzureRmDnsARecords(d *schema.ResourceData) *[]dns.ARecord {
 	recordStrings := d.Get("records").(*schema.Set).List()
 	records := make([]dns.ARecord, len(recordStrings))
 
@@ -169,5 +184,5 @@ func expandAzureRmDnsARecords(d *schema.ResourceData) ([]dns.ARecord, error) {
 		}
 	}
 
-	return records, nil
+	return &records
 }

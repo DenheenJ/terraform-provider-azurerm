@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/go-uuid"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
@@ -44,7 +45,7 @@ func TestAccAzureRMActiveDirectoryServicePrincipalPassword_basic(t *testing.T) {
 }
 
 func TestAccAzureRMActiveDirectoryServicePrincipalPassword_requiresImport(t *testing.T) {
-	if !requireResourcesToBeImported {
+	if !features.ShouldResourcesBeImported() {
 		t.Skip("Skipping since resources aren't required to be imported")
 		return
 	}
@@ -113,14 +114,14 @@ func TestAccAzureRMActiveDirectoryServicePrincipalPassword_customKeyId(t *testin
 	})
 }
 
-func testCheckAzureRMActiveDirectoryServicePrincipalPasswordExists(name string) resource.TestCheckFunc {
+func testCheckAzureRMActiveDirectoryServicePrincipalPasswordExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %q", name)
+			return fmt.Errorf("Not found: %q", resourceName)
 		}
 
-		client := testAccProvider.Meta().(*ArmClient).servicePrincipalsClient
+		client := testAccProvider.Meta().(*ArmClient).graph.ServicePrincipalsClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		id := strings.Split(rs.Primary.ID, "/")

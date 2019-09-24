@@ -6,7 +6,11 @@ import (
 	"github.com/Azure/azure-sdk-for-go/services/preview/dns/mgmt/2018-03-01-preview/dns"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/helper/validation"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/response"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/tags"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
@@ -27,15 +31,15 @@ func resourceArmDnsZone() *schema.Resource {
 				ForceNew: true,
 			},
 
-			"resource_group_name": resourceGroupNameDiffSuppressSchema(),
+			"resource_group_name": azure.SchemaResourceGroupNameDiffSuppress(),
 
 			"number_of_record_sets": {
-				Type:     schema.TypeString,
+				Type:     schema.TypeInt,
 				Computed: true,
 			},
 
 			"max_number_of_record_sets": {
-				Type:     schema.TypeString,
+				Type:     schema.TypeInt,
 				Computed: true,
 			},
 
@@ -47,9 +51,10 @@ func resourceArmDnsZone() *schema.Resource {
 			},
 
 			"zone_type": {
-				Type:     schema.TypeString,
-				Default:  string(dns.Public),
-				Optional: true,
+				Type:       schema.TypeString,
+				Default:    string(dns.Public),
+				Optional:   true,
+				Deprecated: "Use the `azurerm_private_dns_zone` resource instead.",
 				ValidateFunc: validation.StringInSlice([]string{
 					string(dns.Private),
 					string(dns.Public),
@@ -68,27 +73,41 @@ func resourceArmDnsZone() *schema.Resource {
 				Elem:     &schema.Schema{Type: schema.TypeString},
 			},
 
-			"tags": tagsSchema(),
+			"tags": tags.Schema(),
 		},
 	}
 }
 
 func resourceArmDnsZoneCreateUpdate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).zonesClient
+	client := meta.(*ArmClient).dns.ZonesClient
 	ctx := meta.(*ArmClient).StopContext
 
 	name := d.Get("name").(string)
 	resGroup := d.Get("resource_group_name").(string)
+
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
+		existing, err := client.Get(ctx, resGroup, name)
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing DNS Zone %q (Resource Group %q): %s", name, resGroup, err)
+			}
+		}
+
+		if existing.ID != nil && *existing.ID != "" {
+			return tf.ImportAsExistsError("azurerm_dns_zone", *existing.ID)
+		}
+	}
+
 	location := "global"
 	zoneType := d.Get("zone_type").(string)
-	tags := d.Get("tags").(map[string]interface{})
+	t := d.Get("tags").(map[string]interface{})
 
 	registrationVirtualNetworkIds := expandDnsZoneRegistrationVirtualNetworkIds(d)
 	resolutionVirtualNetworkIds := expandDnsZoneResolutionVirtualNetworkIds(d)
 
 	parameters := dns.Zone{
 		Location: &location,
-		Tags:     expandTags(tags),
+		Tags:     tags.Expand(t),
 		ZoneProperties: &dns.ZoneProperties{
 			ZoneType:                    dns.ZoneType(zoneType),
 			RegistrationVirtualNetworks: registrationVirtualNetworkIds,
@@ -98,13 +117,18 @@ func resourceArmDnsZoneCreateUpdate(d *schema.ResourceData, meta interface{}) er
 
 	etag := ""
 	ifNoneMatch := "" // set to empty to allow updates to records after creation
-	resp, err := client.CreateOrUpdate(ctx, resGroup, name, parameters, etag, ifNoneMatch)
+	_, err := client.CreateOrUpdate(ctx, resGroup, name, parameters, etag, ifNoneMatch)
 	if err != nil {
-		return err
+		return fmt.Errorf("Error creating/updating DNS Zone %q (Resource Group %q): %s", name, resGroup, err)
+	}
+
+	resp, err := client.Get(ctx, resGroup, name)
+	if err != nil {
+		return fmt.Errorf("Error retrieving DNS Zone %q (Resource Group %q): %s", name, resGroup, err)
 	}
 
 	if resp.ID == nil {
-		return fmt.Errorf("Cannot read DNS zone %s (resource group %s) ID", name, resGroup)
+		return fmt.Errorf("Cannot read DNS Zone %q (Resource Group %q) ID", name, resGroup)
 	}
 
 	d.SetId(*resp.ID)
@@ -113,10 +137,10 @@ func resourceArmDnsZoneCreateUpdate(d *schema.ResourceData, meta interface{}) er
 }
 
 func resourceArmDnsZoneRead(d *schema.ResourceData, meta interface{}) error {
-	zonesClient := meta.(*ArmClient).zonesClient
+	zonesClient := meta.(*ArmClient).dns.ZonesClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -130,7 +154,7 @@ func resourceArmDnsZoneRead(d *schema.ResourceData, meta interface{}) error {
 			d.SetId("")
 			return nil
 		}
-		return fmt.Errorf("Error reading DNS zone %s (resource group %s): %+v", name, resGroup, err)
+		return fmt.Errorf("Error reading DNS Zone %q (Resource Group %q): %+v", name, resGroup, err)
 	}
 
 	d.Set("name", name)
@@ -157,16 +181,14 @@ func resourceArmDnsZoneRead(d *schema.ResourceData, meta interface{}) error {
 		return err
 	}
 
-	flattenAndSetTags(d, resp.Tags)
-
-	return nil
+	return tags.FlattenAndSet(d, resp.Tags)
 }
 
 func resourceArmDnsZoneDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).zonesClient
+	client := meta.(*ArmClient).dns.ZonesClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}

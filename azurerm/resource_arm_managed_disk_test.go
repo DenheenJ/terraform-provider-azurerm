@@ -5,15 +5,18 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-06-01/compute"
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-07-01/compute"
 	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 )
 
 func TestAccAzureRMManagedDisk_empty(t *testing.T) {
 	resourceName := "azurerm_managed_disk.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
+	location := testLocation()
 	var d compute.Disk
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -22,7 +25,7 @@ func TestAccAzureRMManagedDisk_empty(t *testing.T) {
 		CheckDestroy: testCheckAzureRMManagedDiskDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccAzureRMManagedDisk_empty(ri, testLocation()),
+				Config: testAccAzureRMManagedDisk_empty(ri, location),
 				Check: resource.ComposeTestCheckFunc(
 					testCheckAzureRMManagedDiskExists(resourceName, &d, true),
 				),
@@ -36,9 +39,39 @@ func TestAccAzureRMManagedDisk_empty(t *testing.T) {
 	})
 }
 
+func TestAccAzureRMManagedDisk_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
+
+	resourceName := "azurerm_managed_disk.test"
+	ri := tf.AccRandTimeInt()
+	location := testLocation()
+	var d compute.Disk
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMManagedDiskDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMManagedDisk_empty(ri, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMManagedDiskExists(resourceName, &d, true),
+				),
+			},
+			{
+				Config:      testAccAzureRMManagedDisk_requiresImport(ri, location),
+				ExpectError: testRequiresImportError("azurerm_managed_disk"),
+			},
+		},
+	})
+}
+
 func TestAccAzureRMManagedDisk_zeroGbFromPlatformImage(t *testing.T) {
 	resourceName := "azurerm_managed_disk.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	var d compute.Disk
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -59,7 +92,7 @@ func TestAccAzureRMManagedDisk_zeroGbFromPlatformImage(t *testing.T) {
 func TestAccAzureRMManagedDisk_import(t *testing.T) {
 	resourceName := "azurerm_managed_disk.test"
 	location := testLocation()
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	var vm compute.VirtualMachine
 	var d compute.Disk
 
@@ -90,7 +123,7 @@ func TestAccAzureRMManagedDisk_import(t *testing.T) {
 
 func TestAccAzureRMManagedDisk_copy(t *testing.T) {
 	resourceName := "azurerm_managed_disk.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	var d compute.Disk
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -110,7 +143,7 @@ func TestAccAzureRMManagedDisk_copy(t *testing.T) {
 
 func TestAccAzureRMManagedDisk_fromPlatformImage(t *testing.T) {
 	resourceName := "azurerm_managed_disk.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	var d compute.Disk
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -130,7 +163,7 @@ func TestAccAzureRMManagedDisk_fromPlatformImage(t *testing.T) {
 
 func TestAccAzureRMManagedDisk_update(t *testing.T) {
 	resourceName := "azurerm_managed_disk.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	var d compute.Disk
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -165,7 +198,7 @@ func TestAccAzureRMManagedDisk_update(t *testing.T) {
 
 func TestAccAzureRMManagedDisk_encryption(t *testing.T) {
 	resourceName := "azurerm_managed_disk.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := acctest.RandString(4)
 	var d compute.Disk
 
@@ -194,7 +227,7 @@ func TestAccAzureRMManagedDisk_encryption(t *testing.T) {
 
 func TestAccAzureRMManagedDisk_NonStandardCasing(t *testing.T) {
 	resourceName := "azurerm_managed_disk.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	var d compute.Disk
 
 	config := testAccAzureRMManagedDiskNonStandardCasing(ri, testLocation())
@@ -220,7 +253,7 @@ func TestAccAzureRMManagedDisk_NonStandardCasing(t *testing.T) {
 
 func TestAccAzureRMManagedDisk_importEmpty_withZone(t *testing.T) {
 	resourceName := "azurerm_managed_disk.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	var d compute.Disk
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -243,11 +276,98 @@ func TestAccAzureRMManagedDisk_importEmpty_withZone(t *testing.T) {
 	})
 }
 
-func testCheckAzureRMManagedDiskExists(name string, d *compute.Disk, shouldExist bool) resource.TestCheckFunc {
+func TestAccAzureRMManagedDisk_create_withUltraSSD(t *testing.T) {
+	resourceName := "azurerm_managed_disk.test"
+	ri := tf.AccRandTimeInt()
+	location := "eastus2"
+	var d compute.Disk
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMManagedDiskDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMManagedDisk_create_withUltraSSD(ri, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMManagedDiskExists(resourceName, &d, true),
+				),
+			},
+			{
+				ResourceName:      resourceName,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+func TestAccAzureRMManagedDisk_update_withUltraSSD(t *testing.T) {
+	resourceName := "azurerm_managed_disk.test"
+	ri := tf.AccRandTimeInt()
+	location := "eastus2"
+	var d compute.Disk
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMManagedDiskDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMManagedDisk_create_withUltraSSD(ri, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMManagedDiskExists(resourceName, &d, true),
+					resource.TestCheckResourceAttr(resourceName, "disk_iops_read_write", "101"),
+					resource.TestCheckResourceAttr(resourceName, "disk_mbps_read_write", "10"),
+				),
+			},
+			{
+				Config: testAccAzureRMManagedDisk_update_withUltraSSD(ri, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMManagedDiskExists(resourceName, &d, true),
+					resource.TestCheckResourceAttr(resourceName, "disk_iops_read_write", "102"),
+					resource.TestCheckResourceAttr(resourceName, "disk_mbps_read_write", "11"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccAzureRMManagedDisk_import_withUltraSSD(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
+
+	resourceName := "azurerm_managed_disk.test"
+	ri := tf.AccRandTimeInt()
+	location := "eastus2"
+	var d compute.Disk
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMManagedDiskDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMManagedDisk_create_withUltraSSD(ri, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMManagedDiskExists(resourceName, &d, true),
+				),
+			},
+			{
+				Config:      testAccAzureRMManagedDisk_import_withUltraSSD(ri, location),
+				ExpectError: testRequiresImportError("azurerm_managed_disk"),
+			},
+		},
+	})
+}
+
+func testCheckAzureRMManagedDiskExists(resourceName string, d *compute.Disk, shouldExist bool) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		dName := rs.Primary.Attributes["name"]
@@ -256,7 +376,7 @@ func testCheckAzureRMManagedDiskExists(name string, d *compute.Disk, shouldExist
 			return fmt.Errorf("Bad: no resource group found in state for disk: %s", dName)
 		}
 
-		client := testAccProvider.Meta().(*ArmClient).diskClient
+		client := testAccProvider.Meta().(*ArmClient).compute.DisksClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		resp, err := client.Get(ctx, resourceGroup, dName)
@@ -278,7 +398,7 @@ func testCheckAzureRMManagedDiskExists(name string, d *compute.Disk, shouldExist
 }
 
 func testCheckAzureRMManagedDiskDestroy(s *terraform.State) error {
-	client := testAccProvider.Meta().(*ArmClient).diskClient
+	client := testAccProvider.Meta().(*ArmClient).compute.DisksClient
 	ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 	for _, rs := range s.RootModule().Resources {
@@ -303,11 +423,11 @@ func testCheckAzureRMManagedDiskDestroy(s *terraform.State) error {
 	return nil
 }
 
-func testDeleteAzureRMVirtualMachine(name string) resource.TestCheckFunc {
+func testDeleteAzureRMVirtualMachine(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		vmName := rs.Primary.Attributes["name"]
@@ -316,7 +436,7 @@ func testDeleteAzureRMVirtualMachine(name string) resource.TestCheckFunc {
 			return fmt.Errorf("Bad: no resource group found in state for virtual machine: %s", vmName)
 		}
 
-		client := testAccProvider.Meta().(*ArmClient).vmClient
+		client := testAccProvider.Meta().(*ArmClient).compute.VMClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		future, err := client.Delete(ctx, resourceGroup, vmName)
@@ -347,12 +467,33 @@ resource "azurerm_managed_disk" "test" {
   create_option        = "Empty"
   disk_size_gb         = "1"
 
-  tags {
+  tags = {
     environment = "acctest"
     cost-center = "ops"
   }
 }
 `, rInt, location, rInt)
+}
+
+func testAccAzureRMManagedDisk_requiresImport(rInt int, location string) string {
+	template := testAccAzureRMManagedDisk_empty(rInt, location)
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_managed_disk" "import" {
+  name                 = "${azurerm_managed_disk.test.name}"
+  location             = "${azurerm_managed_disk.test.location}"
+  resource_group_name  = "${azurerm_managed_disk.test.resource_group_name}"
+  storage_account_type = "Standard_LRS"
+  create_option        = "Empty"
+  disk_size_gb         = "1"
+
+  tags = {
+    environment = "acctest"
+    cost-center = "ops"
+  }
+}
+`, template)
 }
 
 func testAccAzureRMManagedDisk_empty_withZone(rInt int, location string) string {
@@ -371,7 +512,7 @@ resource "azurerm_managed_disk" "test" {
   disk_size_gb         = "1"
   zones                = ["1"]
 
-  tags {
+  tags = {
     environment = "acctest"
     cost-center = "ops"
   }
@@ -393,7 +534,7 @@ resource "azurerm_storage_account" "test" {
   account_tier             = "Standard"
   account_replication_type = "LRS"
 
-  tags {
+  tags = {
     environment = "staging"
   }
 }
@@ -414,7 +555,7 @@ resource "azurerm_managed_disk" "test" {
   source_uri           = "${azurerm_storage_account.test.primary_blob_endpoint}${azurerm_storage_container.test.name}/myosdisk1.vhd"
   disk_size_gb         = "45"
 
-  tags {
+  tags = {
     environment = "acctest"
   }
 }
@@ -436,7 +577,7 @@ resource "azurerm_managed_disk" "source" {
   create_option        = "Empty"
   disk_size_gb         = "1"
 
-  tags {
+  tags = {
     environment = "acctest"
     cost-center = "ops"
   }
@@ -451,7 +592,7 @@ resource "azurerm_managed_disk" "test" {
   source_resource_id   = "${azurerm_managed_disk.source.id}"
   disk_size_gb         = "1"
 
-  tags {
+  tags = {
     environment = "acctest"
     cost-center = "ops"
   }
@@ -474,7 +615,7 @@ resource "azurerm_managed_disk" "test" {
   create_option        = "Empty"
   disk_size_gb         = "2"
 
-  tags {
+  tags = {
     environment = "acctest"
   }
 }
@@ -484,21 +625,24 @@ resource "azurerm_managed_disk" "test" {
 func testAccAzureRMManagedDiskNonStandardCasing(rInt int, location string) string {
 	return fmt.Sprintf(`
 resource "azurerm_resource_group" "test" {
-    name = "acctestRG-%d"
-    location = "%s"
+  name     = "acctestRG-%d"
+  location = "%s"
 }
+
 resource "azurerm_managed_disk" "test" {
-    name = "acctestd-%d"
-    location = "${azurerm_resource_group.test.location}"
-    resource_group_name = "${azurerm_resource_group.test.name}"
-    storage_account_type = "standard_lrs"
-    create_option = "Empty"
-    disk_size_gb = "1"
-    tags {
-        environment = "acctest"
-        cost-center = "ops"
-    }
-}`, rInt, location, rInt)
+  name                 = "acctestd-%d"
+  location             = "${azurerm_resource_group.test.location}"
+  resource_group_name  = "${azurerm_resource_group.test.name}"
+  storage_account_type = "standard_lrs"
+  create_option        = "Empty"
+  disk_size_gb         = "1"
+
+  tags = {
+    environment = "acctest"
+    cost-center = "ops"
+  }
+}
+`, rInt, location, rInt)
 }
 
 func testAccAzureRMManagedDisk_platformImage(rInt int, location string) string {
@@ -511,16 +655,17 @@ data "azurerm_platform_image" "test" {
 }
 
 resource "azurerm_resource_group" "test" {
-  name = "acctestRG-%d"
+  name     = "acctestRG-%d"
   location = "%s"
 }
+
 resource "azurerm_managed_disk" "test" {
-  name = "acctestd-%d"
-  location = "${azurerm_resource_group.test.location}"
-  resource_group_name = "${azurerm_resource_group.test.name}"
-  os_type = "Linux"
-  create_option = "FromImage"
-  image_reference_id = "${data.azurerm_platform_image.test.id}"
+  name                 = "acctestd-%d"
+  location             = "${azurerm_resource_group.test.location}"
+  resource_group_name  = "${azurerm_resource_group.test.name}"
+  os_type              = "Linux"
+  create_option        = "FromImage"
+  image_reference_id   = "${data.azurerm_platform_image.test.id}"
   storage_account_type = "Standard_LRS"
 }
 `, location, rInt, location, rInt)
@@ -591,7 +736,7 @@ resource "azurerm_key_vault" "test" {
 
   enabled_for_disk_encryption = true
 
-  tags {
+  tags = {
     environment = "Production"
   }
 }
@@ -636,10 +781,85 @@ resource "azurerm_managed_disk" "test" {
     }
   }
 
-  tags {
+  tags = {
     environment = "acctest"
     cost-center = "ops"
   }
 }
 `, rInt, location, rString, rString, rString, rInt)
+}
+
+func testAccAzureRMManagedDisk_create_withUltraSSD(rInt int, location string) string {
+	return fmt.Sprintf(`
+resource "azurerm_resource_group" "test" {
+  name     = "acctestRG-%d"
+  location = "%s"
+}
+
+resource "azurerm_managed_disk" "test" {
+  name                 = "acctestd-%d"
+  location             = "${azurerm_resource_group.test.location}"
+  resource_group_name  = "${azurerm_resource_group.test.name}"
+  storage_account_type = "UltraSSD_LRS"
+  create_option        = "Empty"
+  disk_size_gb         = "4"
+  disk_iops_read_write = "101"
+  disk_mbps_read_write = "10"
+  zones                = ["1"]
+
+  tags = {
+    environment = "acctest"
+    cost-center = "ops"
+  }
+}
+`, rInt, location, rInt)
+}
+
+func testAccAzureRMManagedDisk_update_withUltraSSD(rInt int, location string) string {
+	return fmt.Sprintf(`
+resource "azurerm_resource_group" "test" {
+  name     = "acctestRG-%d"
+  location = "%s"
+}
+
+resource "azurerm_managed_disk" "test" {
+  name                 = "acctestd-%d"
+  location             = "${azurerm_resource_group.test.location}"
+  resource_group_name  = "${azurerm_resource_group.test.name}"
+  storage_account_type = "UltraSSD_LRS"
+  create_option        = "Empty"
+  disk_size_gb         = "4"
+  disk_iops_read_write = "102"
+  disk_mbps_read_write = "11"
+  zones                = ["1"]
+
+  tags = {
+    environment = "acctest"
+    cost-center = "ops"
+  }
+}
+`, rInt, location, rInt)
+}
+
+func testAccAzureRMManagedDisk_import_withUltraSSD(rInt int, location string) string {
+	template := testAccAzureRMManagedDisk_create_withUltraSSD(rInt, location)
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_managed_disk" "import" {
+  name                 = "${azurerm_managed_disk.test.name}"
+  location             = "${azurerm_managed_disk.test.location}"
+  resource_group_name  = "${azurerm_managed_disk.test.resource_group_name}"
+  storage_account_type = "UltraSSD_LRS"
+  create_option        = "Empty"
+  disk_size_gb         = "4"
+  disk_iops_read_write = "101"
+  disk_mbps_read_write = "10"
+
+  tags = {
+    environment = "acctest"
+    cost-center = "ops"
+  }
+}
+`, template)
 }

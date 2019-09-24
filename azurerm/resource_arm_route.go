@@ -3,7 +3,12 @@ package azurerm
 import (
 	"fmt"
 
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-08-01/network"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/locks"
+
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2019-06-01/network"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/helper/validation"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/suppress"
@@ -30,7 +35,7 @@ func resourceArmRoute() *schema.Resource {
 				ValidateFunc: validate.NoEmptyStrings,
 			},
 
-			"resource_group_name": resourceGroupNameSchema(),
+			"resource_group_name": azure.SchemaResourceGroupName(),
 
 			"route_table_name": {
 				Type:         schema.TypeString,
@@ -68,7 +73,7 @@ func resourceArmRoute() *schema.Resource {
 }
 
 func resourceArmRouteCreateUpdate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).routesClient
+	client := meta.(*ArmClient).network.RoutesClient
 	ctx := meta.(*ArmClient).StopContext
 
 	name := d.Get("name").(string)
@@ -78,8 +83,21 @@ func resourceArmRouteCreateUpdate(d *schema.ResourceData, meta interface{}) erro
 	addressPrefix := d.Get("address_prefix").(string)
 	nextHopType := d.Get("next_hop_type").(string)
 
-	azureRMLockByName(rtName, routeTableResourceName)
-	defer azureRMUnlockByName(rtName, routeTableResourceName)
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
+		existing, err := client.Get(ctx, resGroup, rtName, name)
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing Route %q (Route Table %q / Resource Group %q): %+v", name, rtName, resGroup, err)
+			}
+		}
+
+		if existing.ID != nil && *existing.ID != "" {
+			return tf.ImportAsExistsError("azurerm_route", *existing.ID)
+		}
+	}
+
+	locks.ByName(rtName, routeTableResourceName)
+	defer locks.UnlockByName(rtName, routeTableResourceName)
 
 	route := network.Route{
 		Name: &name,
@@ -115,10 +133,10 @@ func resourceArmRouteCreateUpdate(d *schema.ResourceData, meta interface{}) erro
 }
 
 func resourceArmRouteRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).routesClient
+	client := meta.(*ArmClient).network.RoutesClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -149,10 +167,10 @@ func resourceArmRouteRead(d *schema.ResourceData, meta interface{}) error {
 }
 
 func resourceArmRouteDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).routesClient
+	client := meta.(*ArmClient).network.RoutesClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -160,8 +178,8 @@ func resourceArmRouteDelete(d *schema.ResourceData, meta interface{}) error {
 	rtName := id.Path["routeTables"]
 	routeName := id.Path["routes"]
 
-	azureRMLockByName(rtName, routeTableResourceName)
-	defer azureRMUnlockByName(rtName, routeTableResourceName)
+	locks.ByName(rtName, routeTableResourceName)
+	defer locks.UnlockByName(rtName, routeTableResourceName)
 
 	future, err := client.Delete(ctx, resGroup, rtName, routeName)
 	if err != nil {

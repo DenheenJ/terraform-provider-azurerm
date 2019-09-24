@@ -13,14 +13,18 @@ import (
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/helper/validation"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/suppress"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 func resourceArmTemplateDeployment() *schema.Resource {
 	return &schema.Resource{
-		Create: resourceArmTemplateDeploymentCreate,
+		Create: resourceArmTemplateDeploymentCreateUpdate,
 		Read:   resourceArmTemplateDeploymentRead,
-		Update: resourceArmTemplateDeploymentCreate,
+		Update: resourceArmTemplateDeploymentCreateUpdate,
 		Delete: resourceArmTemplateDeploymentDelete,
 
 		Schema: map[string]*schema.Schema{
@@ -30,7 +34,7 @@ func resourceArmTemplateDeployment() *schema.Resource {
 				ForceNew: true,
 			},
 
-			"resource_group_name": resourceGroupNameSchema(),
+			"resource_group_name": azure.SchemaResourceGroupName(),
 
 			"template_body": {
 				Type:      schema.TypeString,
@@ -43,6 +47,9 @@ func resourceArmTemplateDeployment() *schema.Resource {
 				Type:          schema.TypeMap,
 				Optional:      true,
 				ConflictsWith: []string{"parameters_body"},
+				Elem: &schema.Schema{
+					Type: schema.TypeString,
+				},
 			},
 
 			"parameters_body": {
@@ -59,25 +66,41 @@ func resourceArmTemplateDeployment() *schema.Resource {
 					string(resources.Complete),
 					string(resources.Incremental),
 				}, true),
-				DiffSuppressFunc: ignoreCaseDiffSuppressFunc,
+				DiffSuppressFunc: suppress.CaseDifference,
 			},
 
 			"outputs": {
 				Type:     schema.TypeMap,
 				Computed: true,
+				Elem: &schema.Schema{
+					Type: schema.TypeString,
+				},
 			},
 		},
 	}
 }
 
-func resourceArmTemplateDeploymentCreate(d *schema.ResourceData, meta interface{}) error {
+func resourceArmTemplateDeploymentCreateUpdate(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*ArmClient)
-	deployClient := client.deploymentsClient
+	deployClient := client.resource.DeploymentsClient
 	ctx := client.StopContext
 
 	name := d.Get("name").(string)
 	resourceGroup := d.Get("resource_group_name").(string)
 	deploymentMode := d.Get("deployment_mode").(string)
+
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
+		existing, err := deployClient.Get(ctx, resourceGroup, name)
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing Template Deployment %s (resource group %s) %v", name, resourceGroup, err)
+			}
+		}
+
+		if existing.ID != nil && *existing.ID != "" {
+			return tf.ImportAsExistsError("azurerm_template_deployment", *existing.ID)
+		}
+	}
 
 	log.Printf("[INFO] preparing arguments for AzureRM Template Deployment creation.")
 	properties := resources.DeploymentProperties{
@@ -127,7 +150,7 @@ func resourceArmTemplateDeploymentCreate(d *schema.ResourceData, meta interface{
 	}
 
 	if err = future.WaitForCompletionRef(ctx, deployClient.Client); err != nil {
-		return fmt.Errorf("Error creating deployment: %+v", err)
+		return fmt.Errorf("Error waiting for deployment: %+v", err)
 	}
 
 	read, err := deployClient.Get(ctx, resourceGroup, name)
@@ -145,10 +168,10 @@ func resourceArmTemplateDeploymentCreate(d *schema.ResourceData, meta interface{
 
 func resourceArmTemplateDeploymentRead(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*ArmClient)
-	deployClient := client.deploymentsClient
+	deployClient := client.resource.DeploymentsClient
 	ctx := client.StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -211,10 +234,10 @@ func resourceArmTemplateDeploymentRead(d *schema.ResourceData, meta interface{})
 
 func resourceArmTemplateDeploymentDelete(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*ArmClient)
-	deployClient := client.deploymentsClient
+	deployClient := client.resource.DeploymentsClient
 	ctx := client.StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -262,7 +285,7 @@ func normalizeJson(jsonString interface{}) string {
 	return string(b[:])
 }
 
-func waitForTemplateDeploymentToBeDeleted(ctx context.Context, client resources.DeploymentsClient, resourceGroup, name string) error {
+func waitForTemplateDeploymentToBeDeleted(ctx context.Context, client *resources.DeploymentsClient, resourceGroup, name string) error {
 	// we can't use the Waiter here since the API returns a 200 once it's deleted which is considered a polling status code..
 	log.Printf("[DEBUG] Waiting for Template Deployment (%q in Resource Group %q) to be deleted", name, resourceGroup)
 	stateConf := &resource.StateChangeConf{
@@ -278,7 +301,7 @@ func waitForTemplateDeploymentToBeDeleted(ctx context.Context, client resources.
 	return nil
 }
 
-func templateDeploymentStateStatusCodeRefreshFunc(ctx context.Context, client resources.DeploymentsClient, resourceGroup, name string) resource.StateRefreshFunc {
+func templateDeploymentStateStatusCodeRefreshFunc(ctx context.Context, client *resources.DeploymentsClient, resourceGroup, name string) resource.StateRefreshFunc {
 	return func() (interface{}, string, error) {
 		res, err := client.Get(ctx, resourceGroup, name)
 

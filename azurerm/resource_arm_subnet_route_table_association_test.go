@@ -4,15 +4,17 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 func TestAccAzureRMSubnetRouteTableAssociation_basic(t *testing.T) {
 	resourceName := "azurerm_subnet_route_table_association.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	location := testLocation()
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -35,10 +37,39 @@ func TestAccAzureRMSubnetRouteTableAssociation_basic(t *testing.T) {
 		},
 	})
 }
+func TestAccAzureRMSubnetRouteTableAssociation_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
+
+	resourceName := "azurerm_subnet_route_table_association.test"
+	ri := tf.AccRandTimeInt()
+	location := testLocation()
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:  func() { testAccPreCheck(t) },
+		Providers: testAccProviders,
+		// intentional since this is a Virtual Resource
+		CheckDestroy: testCheckAzureRMSubnetDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMSubnetRouteTableAssociation_basic(ri, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMSubnetRouteTableAssociationExists(resourceName),
+				),
+			},
+			{
+				Config:      testAccAzureRMSubnetRouteTableAssociation_requiresImport(ri, location),
+				ExpectError: testRequiresImportError(""),
+			},
+		},
+	})
+}
 
 func TestAccAzureRMSubnetRouteTableAssociation_deleted(t *testing.T) {
 	resourceName := "azurerm_subnet_route_table_association.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	location := testLocation()
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -60,16 +91,16 @@ func TestAccAzureRMSubnetRouteTableAssociation_deleted(t *testing.T) {
 	})
 }
 
-func testCheckAzureRMSubnetRouteTableAssociationExists(name string) resource.TestCheckFunc {
+func testCheckAzureRMSubnetRouteTableAssociationExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		subnetId := rs.Primary.Attributes["subnet_id"]
-		parsedId, err := parseAzureResourceID(subnetId)
+		parsedId, err := azure.ParseAzureResourceID(subnetId)
 		if err != nil {
 			return err
 		}
@@ -78,7 +109,7 @@ func testCheckAzureRMSubnetRouteTableAssociationExists(name string) resource.Tes
 		virtualNetworkName := parsedId.Path["virtualNetworks"]
 		subnetName := parsedId.Path["subnets"]
 
-		client := testAccProvider.Meta().(*ArmClient).subnetClient
+		client := testAccProvider.Meta().(*ArmClient).network.SubnetsClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 		resp, err := client.Get(ctx, resourceGroupName, virtualNetworkName, subnetName, "")
 		if err != nil {
@@ -102,16 +133,16 @@ func testCheckAzureRMSubnetRouteTableAssociationExists(name string) resource.Tes
 	}
 }
 
-func testCheckAzureRMSubnetRouteTableAssociationDisappears(name string) resource.TestCheckFunc {
+func testCheckAzureRMSubnetRouteTableAssociationDisappears(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		subnetId := rs.Primary.Attributes["subnet_id"]
-		parsedId, err := parseAzureResourceID(subnetId)
+		parsedId, err := azure.ParseAzureResourceID(subnetId)
 		if err != nil {
 			return err
 		}
@@ -120,7 +151,7 @@ func testCheckAzureRMSubnetRouteTableAssociationDisappears(name string) resource
 		virtualNetworkName := parsedId.Path["virtualNetworks"]
 		subnetName := parsedId.Path["subnets"]
 
-		client := testAccProvider.Meta().(*ArmClient).subnetClient
+		client := testAccProvider.Meta().(*ArmClient).network.SubnetsClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 		read, err := client.Get(ctx, resourceGroup, virtualNetworkName, subnetName, "")
 		if err != nil {
@@ -143,16 +174,16 @@ func testCheckAzureRMSubnetRouteTableAssociationDisappears(name string) resource
 	}
 }
 
-func testCheckAzureRMSubnetHasNoRouteTable(name string) resource.TestCheckFunc {
+func testCheckAzureRMSubnetHasNoRouteTable(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		subnetId := rs.Primary.Attributes["subnet_id"]
-		parsedId, err := parseAzureResourceID(subnetId)
+		parsedId, err := azure.ParseAzureResourceID(subnetId)
 		if err != nil {
 			return err
 		}
@@ -161,7 +192,7 @@ func testCheckAzureRMSubnetHasNoRouteTable(name string) resource.TestCheckFunc {
 		virtualNetworkName := parsedId.Path["virtualNetworks"]
 		subnetName := parsedId.Path["subnets"]
 
-		client := testAccProvider.Meta().(*ArmClient).subnetClient
+		client := testAccProvider.Meta().(*ArmClient).network.SubnetsClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 		resp, err := client.Get(ctx, resourceGroupName, virtualNetworkName, subnetName, "")
 		if err != nil {
@@ -225,4 +256,16 @@ resource "azurerm_subnet_route_table_association" "test" {
   route_table_id = "${azurerm_route_table.test.id}"
 }
 `, rInt, location, rInt, rInt, rInt, rInt)
+}
+
+func testAccAzureRMSubnetRouteTableAssociation_requiresImport(rInt int, location string) string {
+	template := testAccAzureRMSubnetRouteTableAssociation_basic(rInt, location)
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_subnet_route_table_association" "import" {
+  subnet_id      = "${azurerm_subnet_route_table_association.test.subnet_id}"
+  route_table_id = "${azurerm_subnet_route_table_association.test.route_table_id}"
+}
+`, template)
 }

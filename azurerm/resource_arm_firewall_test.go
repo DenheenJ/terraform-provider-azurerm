@@ -7,9 +7,9 @@ import (
 
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
-
-	"github.com/hashicorp/terraform/helper/acctest"
 )
 
 func TestValidateFirewallName(t *testing.T) {
@@ -50,7 +50,7 @@ func TestValidateFirewallName(t *testing.T) {
 
 func TestAccAzureRMFirewall_basicOld(t *testing.T) {
 	resourceName := "azurerm_firewall.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	location := testLocation()
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -85,7 +85,7 @@ func TestAccAzureRMFirewall_basicOld(t *testing.T) {
 
 func TestAccAzureRMFirewall_basic(t *testing.T) {
 	resourceName := "azurerm_firewall.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	location := testLocation()
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -110,9 +110,39 @@ func TestAccAzureRMFirewall_basic(t *testing.T) {
 	})
 }
 
+func TestAccAzureRMFirewall_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
+
+	resourceName := "azurerm_firewall.test"
+	ri := tf.AccRandTimeInt()
+
+	location := testLocation()
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMFirewallDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMFirewall_basic(ri, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMFirewallExists(resourceName),
+				),
+			},
+			{
+				Config:      testAccAzureRMFirewall_requiresImport(ri, location),
+				ExpectError: testRequiresImportError("azurerm_firewall"),
+			},
+		},
+	})
+}
+
 func TestAccAzureRMFirewall_withTags(t *testing.T) {
 	resourceName := "azurerm_firewall.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	location := testLocation()
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -148,7 +178,7 @@ func TestAccAzureRMFirewall_withTags(t *testing.T) {
 
 func TestAccAzureRMFirewall_disappears(t *testing.T) {
 	resourceName := "azurerm_firewall.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	location := testLocation()
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -168,12 +198,12 @@ func TestAccAzureRMFirewall_disappears(t *testing.T) {
 	})
 }
 
-func testCheckAzureRMFirewallExists(name string) resource.TestCheckFunc {
+func testCheckAzureRMFirewallExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		name := rs.Primary.Attributes["name"]
@@ -182,7 +212,7 @@ func testCheckAzureRMFirewallExists(name string) resource.TestCheckFunc {
 			return fmt.Errorf("Bad: no resource group found in state for Azure Firewall: %q", name)
 		}
 
-		client := testAccProvider.Meta().(*ArmClient).azureFirewallsClient
+		client := testAccProvider.Meta().(*ArmClient).network.AzureFirewallsClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 		resp, err := client.Get(ctx, resourceGroup, name)
 		if err != nil {
@@ -197,12 +227,12 @@ func testCheckAzureRMFirewallExists(name string) resource.TestCheckFunc {
 	}
 }
 
-func testCheckAzureRMFirewallDisappears(name string) resource.TestCheckFunc {
+func testCheckAzureRMFirewallDisappears(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		name := rs.Primary.Attributes["name"]
@@ -211,7 +241,7 @@ func testCheckAzureRMFirewallDisappears(name string) resource.TestCheckFunc {
 			return fmt.Errorf("Bad: no resource group found in state for Azure Firewall: %q", name)
 		}
 
-		client := testAccProvider.Meta().(*ArmClient).azureFirewallsClient
+		client := testAccProvider.Meta().(*ArmClient).network.AzureFirewallsClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 		future, err := client.Delete(ctx, resourceGroup, name)
 		if err != nil {
@@ -226,7 +256,7 @@ func testCheckAzureRMFirewallDisappears(name string) resource.TestCheckFunc {
 }
 
 func testCheckAzureRMFirewallDestroy(s *terraform.State) error {
-	client := testAccProvider.Meta().(*ArmClient).azureFirewallsClient
+	client := testAccProvider.Meta().(*ArmClient).network.AzureFirewallsClient
 	ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 	for _, rs := range s.RootModule().Resources {
@@ -274,11 +304,11 @@ resource "azurerm_subnet" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "acctestpip%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "Static"
-  sku                          = "Standard"
+  name                = "acctestpip%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
+  sku                 = "Standard"
 }
 
 resource "azurerm_firewall" "test" {
@@ -317,11 +347,11 @@ resource "azurerm_subnet" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "acctestpip%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "Static"
-  sku                          = "Standard"
+  name                = "acctestpip%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
+  sku                 = "Standard"
 }
 
 resource "azurerm_firewall" "test" {
@@ -330,12 +360,31 @@ resource "azurerm_firewall" "test" {
   resource_group_name = "${azurerm_resource_group.test.name}"
 
   ip_configuration {
-    name                          = "configuration"
-    subnet_id                     = "${azurerm_subnet.test.id}"
-    public_ip_address_id          = "${azurerm_public_ip.test.id}"
+    name                 = "configuration"
+    subnet_id            = "${azurerm_subnet.test.id}"
+    public_ip_address_id = "${azurerm_public_ip.test.id}"
   }
 }
 `, rInt, location, rInt, rInt, rInt)
+}
+
+func testAccAzureRMFirewall_requiresImport(rInt int, location string) string {
+	template := testAccAzureRMFirewall_basic(rInt, location)
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_firewall" "import" {
+  name                = "${azurerm_firewall.test.name}"
+  location            = "${azurerm_firewall.test.location}"
+  resource_group_name = "${azurerm_firewall.test.resource_group_name}"
+
+  ip_configuration {
+    name                 = "configuration"
+    subnet_id            = "${azurerm_subnet.test.id}"
+    public_ip_address_id = "${azurerm_public_ip.test.id}"
+  }
+}
+`, template)
 }
 
 func testAccAzureRMFirewall_withTags(rInt int, location string) string {
@@ -360,11 +409,11 @@ resource "azurerm_subnet" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "acctestpip%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "Static"
-  sku                          = "Standard"
+  name                = "acctestpip%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
+  sku                 = "Standard"
 }
 
 resource "azurerm_firewall" "test" {
@@ -373,12 +422,12 @@ resource "azurerm_firewall" "test" {
   resource_group_name = "${azurerm_resource_group.test.name}"
 
   ip_configuration {
-    name                          = "configuration"
-    subnet_id                     = "${azurerm_subnet.test.id}"
-    public_ip_address_id          = "${azurerm_public_ip.test.id}"
+    name                 = "configuration"
+    subnet_id            = "${azurerm_subnet.test.id}"
+    public_ip_address_id = "${azurerm_public_ip.test.id}"
   }
 
-  tags {
+  tags = {
     environment = "Production"
     cost_center = "MSFT"
   }
@@ -408,11 +457,11 @@ resource "azurerm_subnet" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "acctestpip%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "Static"
-  sku                          = "Standard"
+  name                = "acctestpip%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
+  sku                 = "Standard"
 }
 
 resource "azurerm_firewall" "test" {
@@ -421,12 +470,12 @@ resource "azurerm_firewall" "test" {
   resource_group_name = "${azurerm_resource_group.test.name}"
 
   ip_configuration {
-    name                          = "configuration"
-    subnet_id                     = "${azurerm_subnet.test.id}"
-    public_ip_address_id          = "${azurerm_public_ip.test.id}"
+    name                 = "configuration"
+    subnet_id            = "${azurerm_subnet.test.id}"
+    public_ip_address_id = "${azurerm_public_ip.test.id}"
   }
 
-  tags {
+  tags = {
     environment = "staging"
   }
 }

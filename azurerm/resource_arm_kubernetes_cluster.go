@@ -1,18 +1,20 @@
 package azurerm
 
 import (
-	"bytes"
 	"fmt"
 	"log"
-	"regexp"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/containerservice/mgmt/2018-03-31/containerservice"
-	"github.com/hashicorp/terraform/helper/hashcode"
+	"github.com/Azure/azure-sdk-for-go/services/containerservice/mgmt/2019-06-01/containerservice"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/helper/validation"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/kubernetes"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/suppress"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/validate"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/tags"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
@@ -44,6 +46,12 @@ func resourceArmKubernetesCluster() *schema.Resource {
 				dockerBridgeCidr := profile["docker_bridge_cidr"].(string)
 				dnsServiceIP := profile["dns_service_ip"].(string)
 				serviceCidr := profile["service_cidr"].(string)
+				podCidr := profile["pod_cidr"].(string)
+
+				// Azure network plugin is not compatible with pod_cidr
+				if podCidr != "" && networkPlugin == "azure" {
+					return fmt.Errorf("`pod_cidr` and `azure` cannot be set together.")
+				}
 
 				// All empty values.
 				if dockerBridgeCidr == "" && dnsServiceIP == "" && serviceCidr == "" {
@@ -63,37 +71,51 @@ func resourceArmKubernetesCluster() *schema.Resource {
 
 		Schema: map[string]*schema.Schema{
 			"name": {
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
+				Type:         schema.TypeString,
+				Required:     true,
+				ForceNew:     true,
+				ValidateFunc: validate.NoEmptyStrings,
 			},
 
-			"location": locationSchema(),
+			"location": azure.SchemaLocation(),
 
-			"resource_group_name": resourceGroupNameSchema(),
+			"resource_group_name": azure.SchemaResourceGroupName(),
 
 			"dns_prefix": {
-				Type:     schema.TypeString,
-				Required: true,
+				Type:         schema.TypeString,
+				Required:     true,
+				ForceNew:     true,
+				ValidateFunc: validate.KubernetesDNSPrefix,
 			},
 
 			"kubernetes_version": {
-				Type:     schema.TypeString,
-				Optional: true,
-				Computed: true,
+				Type:         schema.TypeString,
+				Optional:     true,
+				Computed:     true,
+				ValidateFunc: validate.NoEmptyStrings,
 			},
 
 			"agent_pool_profile": {
 				Type:     schema.TypeList,
 				Required: true,
-				MaxItems: 1,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"name": {
 							Type:         schema.TypeString,
 							Required:     true,
 							ForceNew:     true,
-							ValidateFunc: validateKubernetesClusterAgentPoolName(),
+							ValidateFunc: validate.KubernetesAgentPoolName,
+						},
+
+						"type": {
+							Type:     schema.TypeString,
+							Optional: true,
+							ForceNew: true,
+							Default:  string(containerservice.AvailabilitySet),
+							ValidateFunc: validation.StringInSlice([]string{
+								string(containerservice.AvailabilitySet),
+								string(containerservice.VirtualMachineScaleSets),
+							}, false),
 						},
 
 						"count": {
@@ -101,6 +123,31 @@ func resourceArmKubernetesCluster() *schema.Resource {
 							Optional:     true,
 							Default:      1,
 							ValidateFunc: validation.IntBetween(1, 100),
+						},
+
+						"max_count": {
+							Type:         schema.TypeInt,
+							Optional:     true,
+							ValidateFunc: validation.IntBetween(1, 100),
+						},
+
+						"min_count": {
+							Type:         schema.TypeInt,
+							Optional:     true,
+							ValidateFunc: validation.IntBetween(1, 100),
+						},
+
+						"enable_auto_scaling": {
+							Type:     schema.TypeBool,
+							Optional: true,
+						},
+
+						"availability_zones": {
+							Type:     schema.TypeList,
+							Optional: true,
+							Elem: &schema.Schema{
+								Type: schema.TypeString,
+							},
 						},
 
 						// TODO: remove this field in the next major version
@@ -121,6 +168,7 @@ func resourceArmKubernetesCluster() *schema.Resource {
 							Required:         true,
 							ForceNew:         true,
 							DiffSuppressFunc: suppress.CaseDifference,
+							ValidateFunc:     validate.NoEmptyStrings,
 						},
 
 						"os_disk_size_gb": {
@@ -132,9 +180,10 @@ func resourceArmKubernetesCluster() *schema.Resource {
 						},
 
 						"vnet_subnet_id": {
-							Type:     schema.TypeString,
-							Optional: true,
-							ForceNew: true,
+							Type:         schema.TypeString,
+							Optional:     true,
+							ForceNew:     true,
+							ValidateFunc: azure.ValidateResourceID,
 						},
 
 						"os_type": {
@@ -155,32 +204,38 @@ func resourceArmKubernetesCluster() *schema.Resource {
 							Computed: true,
 							ForceNew: true,
 						},
+
+						"node_taints": {
+							Type:     schema.TypeList,
+							Optional: true,
+							Elem:     &schema.Schema{Type: schema.TypeString},
+						},
 					},
 				},
 			},
 
-			// TODO: 2.0 - we should be able to make this a List to be able to detect changes in the Client Secret
 			"service_principal": {
-				Type:     schema.TypeSet,
+				Type:     schema.TypeList,
 				Required: true,
 				MaxItems: 1,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"client_id": {
-							Type:     schema.TypeString,
-							Required: true,
-							ForceNew: true,
+							Type:         schema.TypeString,
+							Required:     true,
+							ForceNew:     true,
+							ValidateFunc: validate.NoEmptyStrings,
 						},
 
 						"client_secret": {
-							Type:      schema.TypeString,
-							ForceNew:  true,
-							Required:  true,
-							Sensitive: true,
+							Type:         schema.TypeString,
+							ForceNew:     true,
+							Required:     true,
+							Sensitive:    true,
+							ValidateFunc: validate.NoEmptyStrings,
 						},
 					},
 				},
-				Set: resourceKubernetesClusterServicePrincipalProfileHash,
 			},
 
 			// Optional
@@ -222,7 +277,41 @@ func resourceArmKubernetesCluster() *schema.Resource {
 										Required: true,
 									},
 									"log_analytics_workspace_id": {
-										Type:     schema.TypeString,
+										Type:         schema.TypeString,
+										Required:     true,
+										ValidateFunc: azure.ValidateResourceID,
+									},
+								},
+							},
+						},
+
+						"aci_connector_linux": {
+							Type:     schema.TypeList,
+							MaxItems: 1,
+							Optional: true,
+							Elem: &schema.Resource{
+								Schema: map[string]*schema.Schema{
+									"enabled": {
+										Type:     schema.TypeBool,
+										Required: true,
+									},
+									"subnet_name": {
+										Type:         schema.TypeString,
+										Required:     true,
+										ValidateFunc: validate.NoEmptyStrings,
+									},
+								},
+							},
+						},
+
+						"kube_dashboard": {
+							Type:     schema.TypeList,
+							MaxItems: 1,
+							Optional: true,
+							Elem: &schema.Resource{
+								Schema: map[string]*schema.Schema{
+									"enabled": {
+										Type:     schema.TypeBool,
 										Required: true,
 									},
 								},
@@ -239,24 +328,47 @@ func resourceArmKubernetesCluster() *schema.Resource {
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"admin_username": {
-							Type:     schema.TypeString,
-							Required: true,
-							ForceNew: true,
+							Type:         schema.TypeString,
+							Required:     true,
+							ForceNew:     true,
+							ValidateFunc: validate.KubernetesAdminUserName,
 						},
 						"ssh_key": {
 							Type:     schema.TypeList,
 							Required: true,
 							ForceNew: true,
+							MaxItems: 1,
 
 							Elem: &schema.Resource{
 								Schema: map[string]*schema.Schema{
 									"key_data": {
-										Type:     schema.TypeString,
-										Required: true,
-										ForceNew: true,
+										Type:         schema.TypeString,
+										Required:     true,
+										ForceNew:     true,
+										ValidateFunc: validate.NoEmptyStrings,
 									},
 								},
 							},
+						},
+					},
+				},
+			},
+
+			"windows_profile": {
+				Type:     schema.TypeList,
+				Optional: true,
+				MaxItems: 1,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"admin_username": {
+							Type:     schema.TypeString,
+							Required: true,
+						},
+						"admin_password": {
+							Type:         schema.TypeString,
+							Optional:     true,
+							Sensitive:    true,
+							ValidateFunc: validate.NoEmptyStrings,
 						},
 					},
 				},
@@ -280,32 +392,59 @@ func resourceArmKubernetesCluster() *schema.Resource {
 							}, false),
 						},
 
-						"dns_service_ip": {
+						"network_policy": {
 							Type:     schema.TypeString,
 							Optional: true,
 							Computed: true,
 							ForceNew: true,
+							ValidateFunc: validation.StringInSlice([]string{
+								string(containerservice.NetworkPolicyCalico),
+								string(containerservice.NetworkPolicyAzure),
+							}, false),
+						},
+
+						"dns_service_ip": {
+							Type:         schema.TypeString,
+							Optional:     true,
+							Computed:     true,
+							ForceNew:     true,
+							ValidateFunc: validate.IPv4Address,
 						},
 
 						"docker_bridge_cidr": {
-							Type:     schema.TypeString,
-							Optional: true,
-							Computed: true,
-							ForceNew: true,
+							Type:         schema.TypeString,
+							Optional:     true,
+							Computed:     true,
+							ForceNew:     true,
+							ValidateFunc: validate.CIDR,
 						},
 
 						"pod_cidr": {
-							Type:     schema.TypeString,
-							Optional: true,
-							Computed: true,
-							ForceNew: true,
+							Type:         schema.TypeString,
+							Optional:     true,
+							Computed:     true,
+							ForceNew:     true,
+							ValidateFunc: validate.CIDR,
 						},
 
 						"service_cidr": {
+							Type:         schema.TypeString,
+							Optional:     true,
+							Computed:     true,
+							ForceNew:     true,
+							ValidateFunc: validate.CIDR,
+						},
+
+						"load_balancer_sku": {
 							Type:     schema.TypeString,
 							Optional: true,
-							Computed: true,
+							Default:  string(containerservice.Basic),
 							ForceNew: true,
+							ValidateFunc: validation.StringInSlice([]string{
+								string(containerservice.Basic),
+								string(containerservice.Standard),
+							}, true),
+							DiffSuppressFunc: suppress.CaseDifference,
 						},
 					},
 				},
@@ -332,30 +471,34 @@ func resourceArmKubernetesCluster() *schema.Resource {
 							Elem: &schema.Resource{
 								Schema: map[string]*schema.Schema{
 									"client_app_id": {
-										Type:     schema.TypeString,
-										Required: true,
-										ForceNew: true,
+										Type:         schema.TypeString,
+										Required:     true,
+										ForceNew:     true,
+										ValidateFunc: validate.UUID,
 									},
 
 									"server_app_id": {
-										Type:     schema.TypeString,
-										Required: true,
-										ForceNew: true,
+										Type:         schema.TypeString,
+										Required:     true,
+										ForceNew:     true,
+										ValidateFunc: validate.UUID,
 									},
 
 									"server_app_secret": {
-										Type:      schema.TypeString,
-										ForceNew:  true,
-										Required:  true,
-										Sensitive: true,
+										Type:         schema.TypeString,
+										ForceNew:     true,
+										Required:     true,
+										Sensitive:    true,
+										ValidateFunc: validate.NoEmptyStrings,
 									},
 
 									"tenant_id": {
-										// this can be sourced from the client config if it's not specified
 										Type:     schema.TypeString,
 										Optional: true,
 										Computed: true,
 										ForceNew: true,
+										// OrEmpty since this can be sourced from the client config if it's not specified
+										ValidateFunc: validate.UUIDOrEmpty,
 									},
 								},
 							},
@@ -364,7 +507,7 @@ func resourceArmKubernetesCluster() *schema.Resource {
 				},
 			},
 
-			"tags": tagsSchema(),
+			"tags": tags.Schema(),
 
 			"fqdn": {
 				Type:     schema.TypeString,
@@ -458,6 +601,23 @@ func resourceArmKubernetesCluster() *schema.Resource {
 
 			"node_resource_group": {
 				Type:     schema.TypeString,
+				Optional: true,
+				Computed: true,
+				ForceNew: true,
+			},
+
+			"api_server_authorized_ip_ranges": {
+				Type:     schema.TypeSet,
+				Optional: true,
+				Elem: &schema.Schema{
+					Type:         schema.TypeString,
+					ValidateFunc: validate.CIDR,
+				},
+			},
+
+			"enable_pod_security_policy": {
+				Type:     schema.TypeBool,
+				Optional: true,
 				Computed: true,
 			},
 		},
@@ -465,7 +625,7 @@ func resourceArmKubernetesCluster() *schema.Resource {
 }
 
 func resourceArmKubernetesClusterCreateUpdate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).kubernetesClustersClient
+	client := meta.(*ArmClient).containers.KubernetesClustersClient
 	ctx := meta.(*ArmClient).StopContext
 	tenantId := meta.(*ArmClient).tenantId
 
@@ -473,48 +633,65 @@ func resourceArmKubernetesClusterCreateUpdate(d *schema.ResourceData, meta inter
 
 	resGroup := d.Get("resource_group_name").(string)
 	name := d.Get("name").(string)
-	location := azureRMNormalizeLocation(d.Get("location").(string))
+
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
+		existing, err := client.Get(ctx, resGroup, name)
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing Kubernetes Cluster %q (Resource Group %q): %s", name, resGroup, err)
+			}
+		}
+
+		if existing.ID != nil && *existing.ID != "" {
+			return tf.ImportAsExistsError("azurerm_kubernetes_cluster", *existing.ID)
+		}
+	}
+
+	location := azure.NormalizeLocation(d.Get("location").(string))
 	dnsPrefix := d.Get("dns_prefix").(string)
 	kubernetesVersion := d.Get("kubernetes_version").(string)
 
 	linuxProfile := expandKubernetesClusterLinuxProfile(d)
-	agentProfiles := expandKubernetesClusterAgentPoolProfiles(d)
+	agentProfiles, err := expandKubernetesClusterAgentPoolProfiles(d)
+	if err != nil {
+		return err
+	}
+	windowsProfile := expandKubernetesClusterWindowsProfile(d)
 	servicePrincipalProfile := expandAzureRmKubernetesClusterServicePrincipal(d)
 	networkProfile := expandKubernetesClusterNetworkProfile(d)
 	addonProfiles := expandKubernetesClusterAddonProfiles(d)
 
-	tags := d.Get("tags").(map[string]interface{})
-
-	// we can't do this in the CustomizeDiff since the interpolations aren't evaluated at that point
-	if networkProfile != nil {
-		// ensure there's a Subnet ID attached
-		if networkProfile.NetworkPlugin == containerservice.Azure {
-			for _, profile := range agentProfiles {
-				if profile.VnetSubnetID == nil {
-					return fmt.Errorf("A `vnet_subnet_id` must be specified when the `network_plugin` is set to `azure`.")
-				}
-			}
-		}
-	}
+	t := d.Get("tags").(map[string]interface{})
 
 	rbacRaw := d.Get("role_based_access_control").([]interface{})
 	rbacEnabled, azureADProfile := expandKubernetesClusterRoleBasedAccessControl(rbacRaw, tenantId)
+
+	apiServerAuthorizedIPRangesRaw := d.Get("api_server_authorized_ip_ranges").(*schema.Set).List()
+	apiServerAuthorizedIPRanges := utils.ExpandStringSlice(apiServerAuthorizedIPRangesRaw)
+
+	nodeResourceGroup := d.Get("node_resource_group").(string)
+
+	enablePodSecurityPolicy := d.Get("enable_pod_security_policy").(bool)
 
 	parameters := containerservice.ManagedCluster{
 		Name:     &name,
 		Location: &location,
 		ManagedClusterProperties: &containerservice.ManagedClusterProperties{
-			AadProfile:              azureADProfile,
-			AddonProfiles:           addonProfiles,
-			AgentPoolProfiles:       &agentProfiles,
-			DNSPrefix:               utils.String(dnsPrefix),
-			EnableRBAC:              utils.Bool(rbacEnabled),
-			KubernetesVersion:       utils.String(kubernetesVersion),
-			LinuxProfile:            linuxProfile,
-			NetworkProfile:          networkProfile,
-			ServicePrincipalProfile: servicePrincipalProfile,
+			APIServerAuthorizedIPRanges: apiServerAuthorizedIPRanges,
+			AadProfile:                  azureADProfile,
+			AddonProfiles:               addonProfiles,
+			AgentPoolProfiles:           &agentProfiles,
+			DNSPrefix:                   utils.String(dnsPrefix),
+			EnableRBAC:                  utils.Bool(rbacEnabled),
+			KubernetesVersion:           utils.String(kubernetesVersion),
+			LinuxProfile:                linuxProfile,
+			WindowsProfile:              windowsProfile,
+			NetworkProfile:              networkProfile,
+			ServicePrincipalProfile:     servicePrincipalProfile,
+			NodeResourceGroup:           utils.String(nodeResourceGroup),
+			EnablePodSecurityPolicy:     utils.Bool(enablePodSecurityPolicy),
 		},
-		Tags: expandTags(tags),
+		Tags: tags.Expand(t),
 	}
 
 	future, err := client.CreateOrUpdate(ctx, resGroup, name, parameters)
@@ -541,10 +718,10 @@ func resourceArmKubernetesClusterCreateUpdate(d *schema.ResourceData, meta inter
 }
 
 func resourceArmKubernetesClusterRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).kubernetesClustersClient
+	client := meta.(*ArmClient).containers.KubernetesClustersClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -570,7 +747,7 @@ func resourceArmKubernetesClusterRead(d *schema.ResourceData, meta interface{}) 
 	d.Set("name", resp.Name)
 	d.Set("resource_group_name", resGroup)
 	if location := resp.Location; location != nil {
-		d.Set("location", azureRMNormalizeLocation(*location))
+		d.Set("location", azure.NormalizeLocation(*location))
 	}
 
 	if props := resp.ManagedClusterProperties; props != nil {
@@ -578,6 +755,12 @@ func resourceArmKubernetesClusterRead(d *schema.ResourceData, meta interface{}) 
 		d.Set("fqdn", props.Fqdn)
 		d.Set("kubernetes_version", props.KubernetesVersion)
 		d.Set("node_resource_group", props.NodeResourceGroup)
+		d.Set("enable_pod_security_policy", props.EnablePodSecurityPolicy)
+
+		apiServerAuthorizedIPRanges := utils.FlattenStringSlice(props.APIServerAuthorizedIPRanges)
+		if err := d.Set("api_server_authorized_ip_ranges", apiServerAuthorizedIPRanges); err != nil {
+			return fmt.Errorf("Error setting `api_server_authorized_ip_ranges`: %+v", err)
+		}
 
 		addonProfiles := flattenKubernetesClusterAddonProfiles(props.AddonProfiles)
 		if err := d.Set("addon_profile", addonProfiles); err != nil {
@@ -594,6 +777,11 @@ func resourceArmKubernetesClusterRead(d *schema.ResourceData, meta interface{}) 
 			return fmt.Errorf("Error setting `linux_profile`: %+v", err)
 		}
 
+		windowsProfile := flattenKubernetesClusterWindowsProfile(props.WindowsProfile, d)
+		if err := d.Set("windows_profile", windowsProfile); err != nil {
+			return fmt.Errorf("Error setting `windows_profile`: %+v", err)
+		}
+
 		networkProfile := flattenKubernetesClusterNetworkProfile(props.NetworkProfile)
 		if err := d.Set("network_profile", networkProfile); err != nil {
 			return fmt.Errorf("Error setting `network_profile`: %+v", err)
@@ -604,7 +792,7 @@ func resourceArmKubernetesClusterRead(d *schema.ResourceData, meta interface{}) 
 			return fmt.Errorf("Error setting `role_based_access_control`: %+v", err)
 		}
 
-		servicePrincipal := flattenAzureRmKubernetesClusterServicePrincipalProfile(props.ServicePrincipalProfile)
+		servicePrincipal := flattenAzureRmKubernetesClusterServicePrincipalProfile(props.ServicePrincipalProfile, d)
 		if err := d.Set("service_principal", servicePrincipal); err != nil {
 			return fmt.Errorf("Error setting `service_principal`: %+v", err)
 		}
@@ -633,16 +821,14 @@ func resourceArmKubernetesClusterRead(d *schema.ResourceData, meta interface{}) 
 		return fmt.Errorf("Error setting `kube_config`: %+v", err)
 	}
 
-	flattenAndSetTags(d, resp.Tags)
-
-	return nil
+	return tags.FlattenAndSet(d, resp.Tags)
 }
 
 func resourceArmKubernetesClusterDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).kubernetesClustersClient
+	client := meta.(*ArmClient).containers.KubernetesClustersClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -723,6 +909,33 @@ func expandKubernetesClusterAddonProfiles(d *schema.ResourceData) map[string]*co
 		}
 	}
 
+	aciConnector := profile["aci_connector_linux"].([]interface{})
+	if len(aciConnector) > 0 {
+		value := aciConnector[0].(map[string]interface{})
+		config := make(map[string]*string)
+		enabled := value["enabled"].(bool)
+
+		if subnetName, ok := value["subnet_name"]; ok {
+			config["SubnetName"] = utils.String(subnetName.(string))
+		}
+
+		addonProfiles["aciConnectorLinux"] = &containerservice.ManagedClusterAddonProfile{
+			Enabled: utils.Bool(enabled),
+			Config:  config,
+		}
+	}
+
+	kubeDashboard := profile["kube_dashboard"].([]interface{})
+	if len(kubeDashboard) > 0 {
+		value := kubeDashboard[0].(map[string]interface{})
+		enabled := value["enabled"].(bool)
+
+		addonProfiles["kubeDashboard"] = &containerservice.ManagedClusterAddonProfile{
+			Enabled: utils.Bool(enabled),
+			Config:  nil,
+		}
+	}
+
 	return addonProfiles
 }
 
@@ -769,38 +982,110 @@ func flattenKubernetesClusterAddonProfiles(profile map[string]*containerservice.
 	}
 	values["oms_agent"] = agents
 
+	aciConnectors := make([]interface{}, 0)
+	if aciConnector := profile["aciConnectorLinux"]; aciConnector != nil {
+		enabled := false
+		if enabledVal := aciConnector.Enabled; enabledVal != nil {
+			enabled = *enabledVal
+		}
+
+		subnetName := ""
+		if v := aciConnector.Config["SubnetName"]; v != nil {
+			subnetName = *v
+		}
+
+		output := map[string]interface{}{
+			"enabled":     enabled,
+			"subnet_name": subnetName,
+		}
+		aciConnectors = append(aciConnectors, output)
+	}
+	values["aci_connector_linux"] = aciConnectors
+
+	kubeDashboards := make([]interface{}, 0)
+	if kubeDashboard := profile["kubeDashboard"]; kubeDashboard != nil {
+		enabled := false
+		if enabledVal := kubeDashboard.Enabled; enabledVal != nil {
+			enabled = *enabledVal
+		}
+
+		output := map[string]interface{}{
+			"enabled": enabled,
+		}
+		kubeDashboards = append(kubeDashboards, output)
+	}
+	values["kube_dashboard"] = kubeDashboards
+
 	return []interface{}{values}
 }
 
-func expandKubernetesClusterAgentPoolProfiles(d *schema.ResourceData) []containerservice.ManagedClusterAgentPoolProfile {
+func expandKubernetesClusterAgentPoolProfiles(d *schema.ResourceData) ([]containerservice.ManagedClusterAgentPoolProfile, error) {
+
 	configs := d.Get("agent_pool_profile").([]interface{})
-	config := configs[0].(map[string]interface{})
 
-	name := config["name"].(string)
-	count := int32(config["count"].(int))
-	vmSize := config["vm_size"].(string)
-	osDiskSizeGB := int32(config["os_disk_size_gb"].(int))
-	osType := config["os_type"].(string)
+	profiles := make([]containerservice.ManagedClusterAgentPoolProfile, 0)
+	for config_id := range configs {
+		config := configs[config_id].(map[string]interface{})
 
-	profile := containerservice.ManagedClusterAgentPoolProfile{
-		Name:           utils.String(name),
-		Count:          utils.Int32(count),
-		VMSize:         containerservice.VMSizeTypes(vmSize),
-		OsDiskSizeGB:   utils.Int32(osDiskSizeGB),
-		StorageProfile: containerservice.ManagedDisks,
-		OsType:         containerservice.OSType(osType),
+		name := config["name"].(string)
+		poolType := config["type"].(string)
+		count := int32(config["count"].(int))
+		vmSize := config["vm_size"].(string)
+		osDiskSizeGB := int32(config["os_disk_size_gb"].(int))
+		osType := config["os_type"].(string)
+
+		profile := containerservice.ManagedClusterAgentPoolProfile{
+			Name:         utils.String(name),
+			Type:         containerservice.AgentPoolType(poolType),
+			Count:        utils.Int32(count),
+			VMSize:       containerservice.VMSizeTypes(vmSize),
+			OsDiskSizeGB: utils.Int32(osDiskSizeGB),
+			OsType:       containerservice.OSType(osType),
+		}
+
+		if maxPods := int32(config["max_pods"].(int)); maxPods > 0 {
+			profile.MaxPods = utils.Int32(maxPods)
+		}
+
+		vnetSubnetID := config["vnet_subnet_id"].(string)
+		if vnetSubnetID != "" {
+			profile.VnetSubnetID = utils.String(vnetSubnetID)
+		}
+
+		if maxCount := int32(config["max_count"].(int)); maxCount > 0 {
+			profile.MaxCount = utils.Int32(maxCount)
+		}
+
+		if minCount := int32(config["min_count"].(int)); minCount > 0 {
+			profile.MinCount = utils.Int32(minCount)
+		}
+
+		if enableAutoScalingItf := config["enable_auto_scaling"]; enableAutoScalingItf != nil {
+			profile.EnableAutoScaling = utils.Bool(enableAutoScalingItf.(bool))
+
+			// Auto scaling will change the number of nodes, but the original count number should not be sent again.
+			// This avoid the cluster being resized after creation.
+			if *profile.EnableAutoScaling && !d.IsNewResource() {
+				profile.Count = nil
+			}
+		}
+
+		if availavilityZones := utils.ExpandStringSlice(config["availability_zones"].([]interface{})); len(*availavilityZones) > 0 {
+			profile.AvailabilityZones = availavilityZones
+		}
+
+		if *profile.EnableAutoScaling && (profile.MinCount == nil || profile.MaxCount == nil) {
+			return nil, fmt.Errorf("Can't create an AKS cluster with autoscaling enabled but not setting min_count or max_count")
+		}
+
+		if nodeTaints := utils.ExpandStringSlice(config["node_taints"].([]interface{})); len(*nodeTaints) > 0 {
+			profile.NodeTaints = nodeTaints
+		}
+
+		profiles = append(profiles, profile)
 	}
 
-	if maxPods := int32(config["max_pods"].(int)); maxPods > 0 {
-		profile.MaxPods = utils.Int32(maxPods)
-	}
-
-	vnetSubnetID := config["vnet_subnet_id"].(string)
-	if vnetSubnetID != "" {
-		profile.VnetSubnetID = utils.String(vnetSubnetID)
-	}
-
-	return []containerservice.ManagedClusterAgentPoolProfile{profile}
+	return profiles, nil
 }
 
 func flattenKubernetesClusterAgentPoolProfiles(profiles *[]containerservice.ManagedClusterAgentPoolProfile, fqdn *string) []interface{} {
@@ -813,9 +1098,27 @@ func flattenKubernetesClusterAgentPoolProfiles(profiles *[]containerservice.Mana
 	for _, profile := range *profiles {
 		agentPoolProfile := make(map[string]interface{})
 
+		if profile.Type != "" {
+			agentPoolProfile["type"] = string(profile.Type)
+		}
+
 		if profile.Count != nil {
 			agentPoolProfile["count"] = int(*profile.Count)
 		}
+
+		if profile.MinCount != nil {
+			agentPoolProfile["min_count"] = int(*profile.MinCount)
+		}
+
+		if profile.MaxCount != nil {
+			agentPoolProfile["max_count"] = int(*profile.MaxCount)
+		}
+
+		if profile.EnableAutoScaling != nil {
+			agentPoolProfile["enable_auto_scaling"] = *profile.EnableAutoScaling
+		}
+
+		agentPoolProfile["availability_zones"] = utils.FlattenStringSlice(profile.AvailabilityZones)
 
 		if fqdn != nil {
 			// temporarily persist the parent FQDN here until `fqdn` is removed from the `agent_pool_profile`
@@ -844,6 +1147,10 @@ func flattenKubernetesClusterAgentPoolProfiles(profiles *[]containerservice.Mana
 
 		if profile.MaxPods != nil {
 			agentPoolProfile["max_pods"] = int(*profile.MaxPods)
+		}
+
+		if profile.NodeTaints != nil {
+			agentPoolProfile["node_taints"] = *profile.NodeTaints
 		}
 
 		agentPoolProfiles = append(agentPoolProfiles, agentPoolProfile)
@@ -884,6 +1191,26 @@ func expandKubernetesClusterLinuxProfile(d *schema.ResourceData) *containerservi
 	return &profile
 }
 
+func expandKubernetesClusterWindowsProfile(d *schema.ResourceData) *containerservice.ManagedClusterWindowsProfile {
+	profiles := d.Get("windows_profile").([]interface{})
+
+	if len(profiles) == 0 {
+		return nil
+	}
+
+	config := profiles[0].(map[string]interface{})
+
+	adminUsername := config["admin_username"].(string)
+	adminPassword := config["admin_password"].(string)
+
+	profile := containerservice.ManagedClusterWindowsProfile{
+		AdminUsername: &adminUsername,
+		AdminPassword: &adminPassword,
+	}
+
+	return &profile
+}
+
 func flattenKubernetesClusterLinuxProfile(profile *containerservice.LinuxProfile) []interface{} {
 	if profile == nil {
 		return []interface{}{}
@@ -913,7 +1240,26 @@ func flattenKubernetesClusterLinuxProfile(profile *containerservice.LinuxProfile
 	return []interface{}{values}
 }
 
-func expandKubernetesClusterNetworkProfile(d *schema.ResourceData) *containerservice.NetworkProfile {
+func flattenKubernetesClusterWindowsProfile(profile *containerservice.ManagedClusterWindowsProfile, d *schema.ResourceData) []interface{} {
+	if profile == nil {
+		return []interface{}{}
+	}
+
+	values := make(map[string]interface{})
+
+	if username := profile.AdminUsername; username != nil {
+		values["admin_username"] = *username
+	}
+
+	// admin password isn't returned, so let's look it up
+	if v, ok := d.GetOk("windows_profile.0.admin_password"); ok {
+		values["admin_password"] = v.(string)
+	}
+
+	return []interface{}{values}
+}
+
+func expandKubernetesClusterNetworkProfile(d *schema.ResourceData) *containerservice.NetworkProfileType {
 	configs := d.Get("network_profile").([]interface{})
 	if len(configs) == 0 {
 		return nil
@@ -923,8 +1269,14 @@ func expandKubernetesClusterNetworkProfile(d *schema.ResourceData) *containerser
 
 	networkPlugin := config["network_plugin"].(string)
 
-	networkProfile := containerservice.NetworkProfile{
-		NetworkPlugin: containerservice.NetworkPlugin(networkPlugin),
+	networkPolicy := config["network_policy"].(string)
+
+	loadBalancerSku := config["load_balancer_sku"].(string)
+
+	networkProfile := containerservice.NetworkProfileType{
+		NetworkPlugin:   containerservice.NetworkPlugin(networkPlugin),
+		NetworkPolicy:   containerservice.NetworkPolicy(networkPolicy),
+		LoadBalancerSku: containerservice.LoadBalancerSku(loadBalancerSku),
 	}
 
 	if v, ok := config["dns_service_ip"]; ok && v.(string) != "" {
@@ -950,7 +1302,7 @@ func expandKubernetesClusterNetworkProfile(d *schema.ResourceData) *containerser
 	return &networkProfile
 }
 
-func flattenKubernetesClusterNetworkProfile(profile *containerservice.NetworkProfile) []interface{} {
+func flattenKubernetesClusterNetworkProfile(profile *containerservice.NetworkProfileType) []interface{} {
 	if profile == nil {
 		return []interface{}{}
 	}
@@ -958,6 +1310,10 @@ func flattenKubernetesClusterNetworkProfile(profile *containerservice.NetworkPro
 	values := make(map[string]interface{})
 
 	values["network_plugin"] = profile.NetworkPlugin
+
+	if profile.NetworkPolicy != "" {
+		values["network_policy"] = string(profile.NetworkPolicy)
+	}
 
 	if profile.ServiceCidr != nil {
 		values["service_cidr"] = *profile.ServiceCidr
@@ -973,6 +1329,10 @@ func flattenKubernetesClusterNetworkProfile(profile *containerservice.NetworkPro
 
 	if profile.PodCidr != nil {
 		values["pod_cidr"] = *profile.PodCidr
+	}
+
+	if profile.LoadBalancerSku != "" {
+		values["load_balancer_sku"] = string(profile.LoadBalancerSku)
 	}
 
 	return []interface{}{values}
@@ -1063,11 +1423,11 @@ func flattenKubernetesClusterRoleBasedAccessControl(input *containerservice.Mana
 
 func expandAzureRmKubernetesClusterServicePrincipal(d *schema.ResourceData) *containerservice.ManagedClusterServicePrincipalProfile {
 	value, exists := d.GetOk("service_principal")
-	if !exists {
+	configs := value.([]interface{})
+
+	if !exists || len(configs) == 0 {
 		return nil
 	}
-
-	configs := value.(*schema.Set).List()
 
 	config := configs[0].(map[string]interface{})
 
@@ -1082,13 +1442,9 @@ func expandAzureRmKubernetesClusterServicePrincipal(d *schema.ResourceData) *con
 	return &principal
 }
 
-func flattenAzureRmKubernetesClusterServicePrincipalProfile(profile *containerservice.ManagedClusterServicePrincipalProfile) *schema.Set {
+func flattenAzureRmKubernetesClusterServicePrincipalProfile(profile *containerservice.ManagedClusterServicePrincipalProfile, d *schema.ResourceData) []interface{} {
 	if profile == nil {
-		return nil
-	}
-
-	servicePrincipalProfiles := &schema.Set{
-		F: resourceKubernetesClusterServicePrincipalProfileHash,
+		return []interface{}{}
 	}
 
 	values := make(map[string]interface{})
@@ -1096,31 +1452,13 @@ func flattenAzureRmKubernetesClusterServicePrincipalProfile(profile *containerse
 	if clientId := profile.ClientID; clientId != nil {
 		values["client_id"] = *clientId
 	}
-	if secret := profile.Secret; secret != nil {
-		values["client_secret"] = *secret
+
+	// client secret isn't returned by the API so pass the existing value along
+	if v, ok := d.GetOk("service_principal.0.client_secret"); ok {
+		values["client_secret"] = v.(string)
 	}
 
-	servicePrincipalProfiles.Add(values)
-
-	return servicePrincipalProfiles
-}
-
-func resourceKubernetesClusterServicePrincipalProfileHash(v interface{}) int {
-	// TODO: this method should be able to be removed in time
-	var buf bytes.Buffer
-
-	if m, ok := v.(map[string]interface{}); ok {
-		buf.WriteString(fmt.Sprintf("%s-", m["client_id"].(string)))
-	}
-
-	return hashcode.String(buf.String())
-}
-
-func validateKubernetesClusterAgentPoolName() schema.SchemaValidateFunc {
-	return validation.StringMatch(
-		regexp.MustCompile("^[a-z]{1}[a-z0-9]{0,11}$"),
-		"Agent Pool names must start with a lowercase letter, have max length of 12, and only have characters a-z0-9.",
-	)
+	return []interface{}{values}
 }
 
 func flattenKubernetesClusterKubeConfig(config kubernetes.KubeConfig) []interface{} {

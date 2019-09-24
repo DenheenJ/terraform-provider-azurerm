@@ -3,19 +3,21 @@ package azurerm
 import (
 	"fmt"
 	"net/http"
-	"regexp"
 	"testing"
 
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-06-01/compute"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/validate"
+
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-07-01/compute"
 	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
 )
 
 func TestAccAzureRMVirtualMachine_winTimeZone(t *testing.T) {
-	resourceName := "azurerm_virtual_machine.test"
 	var vm compute.VirtualMachine
-	ri := acctest.RandInt()
+	resourceName := "azurerm_virtual_machine.test"
+	ri := tf.AccRandTimeInt()
 	config := testAccAzureRMVirtualMachine_winTimeZone(ri, testLocation())
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -25,7 +27,7 @@ func TestAccAzureRMVirtualMachine_winTimeZone(t *testing.T) {
 			{
 				Config: config,
 				Check: resource.ComposeTestCheckFunc(
-					testCheckAzureRMVirtualMachineExists("azurerm_virtual_machine.test", &vm),
+					testCheckAzureRMVirtualMachineExists(resourceName, &vm),
 					resource.TestCheckResourceAttr(resourceName, "os_profile_windows_config.59207889.timezone", "Pacific Standard Time"),
 				),
 			},
@@ -36,12 +38,12 @@ func TestAccAzureRMVirtualMachine_winTimeZone(t *testing.T) {
 func TestAccAzureRMVirtualMachine_SystemAssignedIdentity(t *testing.T) {
 	var vm compute.VirtualMachine
 	resourceName := "azurerm_virtual_machine.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	config := testAccAzureRMVirtualMachineSystemAssignedIdentity(ri, testLocation())
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
 		Providers:    testAccProviders,
-		CheckDestroy: testCheckAzureRMVirtualMachineScaleSetDestroy,
+		CheckDestroy: testCheckAzureRMVirtualMachineDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: config,
@@ -49,7 +51,7 @@ func TestAccAzureRMVirtualMachine_SystemAssignedIdentity(t *testing.T) {
 					testCheckAzureRMVirtualMachineExists(resourceName, &vm),
 					resource.TestCheckResourceAttr(resourceName, "identity.0.type", "SystemAssigned"),
 					resource.TestCheckResourceAttr(resourceName, "identity.0.identity_ids.#", "0"),
-					resource.TestMatchResourceAttr(resourceName, "identity.0.principal_id", regexp.MustCompile(".+")),
+					resource.TestMatchResourceAttr(resourceName, "identity.0.principal_id", validate.UUIDRegExp),
 				),
 			},
 		},
@@ -59,13 +61,13 @@ func TestAccAzureRMVirtualMachine_SystemAssignedIdentity(t *testing.T) {
 func TestAccAzureRMVirtualMachine_UserAssignedIdentity(t *testing.T) {
 	var vm compute.VirtualMachine
 	resourceName := "azurerm_virtual_machine.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := acctest.RandString(14)
 	config := testAccAzureRMVirtualMachineUserAssignedIdentity(ri, testLocation(), rs)
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
 		Providers:    testAccProviders,
-		CheckDestroy: testCheckAzureRMVirtualMachineScaleSetDestroy,
+		CheckDestroy: testCheckAzureRMVirtualMachineDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: config,
@@ -83,13 +85,13 @@ func TestAccAzureRMVirtualMachine_UserAssignedIdentity(t *testing.T) {
 func TestAccAzureRMVirtualMachine_multipleAssignedIdentity(t *testing.T) {
 	var vm compute.VirtualMachine
 	resourceName := "azurerm_virtual_machine.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := acctest.RandString(14)
 	config := testAccAzureRMVirtualMachineMultipleAssignedIdentity(ri, testLocation(), rs)
-	resource.Test(t, resource.TestCase{
+	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
 		Providers:    testAccProviders,
-		CheckDestroy: testCheckAzureRMVirtualMachineScaleSetDestroy,
+		CheckDestroy: testCheckAzureRMVirtualMachineDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: config,
@@ -97,19 +99,41 @@ func TestAccAzureRMVirtualMachine_multipleAssignedIdentity(t *testing.T) {
 					testCheckAzureRMVirtualMachineExists(resourceName, &vm),
 					resource.TestCheckResourceAttr(resourceName, "identity.0.type", "SystemAssigned, UserAssigned"),
 					resource.TestCheckResourceAttr(resourceName, "identity.0.identity_ids.#", "1"),
-					resource.TestMatchResourceAttr(resourceName, "identity.0.principal_id", regexp.MustCompile(".+")),
+					resource.TestMatchResourceAttr(resourceName, "identity.0.principal_id", validate.UUIDRegExp),
 				),
 			},
 		},
 	})
 }
 
-func testCheckAzureRMVirtualMachineExists(name string, vm *compute.VirtualMachine) resource.TestCheckFunc {
+func TestAccAzureRMVirtualMachine_withPPG(t *testing.T) {
+	var vm compute.VirtualMachine
+	resourceName := "azurerm_virtual_machine.test"
+	ri := tf.AccRandTimeInt()
+	rs := acctest.RandString(14)
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMVirtualMachineDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMVirtualMachinePPG(ri, testLocation(), rs),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMVirtualMachineExists(resourceName, &vm),
+					resource.TestCheckResourceAttrSet(resourceName, "proximity_placement_group_id"),
+				),
+			},
+		},
+	})
+}
+
+func testCheckAzureRMVirtualMachineExists(resourceName string, vm *compute.VirtualMachine) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		vmName := rs.Primary.Attributes["name"]
@@ -118,7 +142,7 @@ func testCheckAzureRMVirtualMachineExists(name string, vm *compute.VirtualMachin
 			return fmt.Errorf("Bad: no resource group found in state for virtual machine: %s", vmName)
 		}
 
-		client := testAccProvider.Meta().(*ArmClient).vmClient
+		client := testAccProvider.Meta().(*ArmClient).compute.VMClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		resp, err := client.Get(ctx, resourceGroup, vmName, "")
@@ -137,7 +161,7 @@ func testCheckAzureRMVirtualMachineExists(name string, vm *compute.VirtualMachin
 }
 
 func testCheckAzureRMVirtualMachineDestroy(s *terraform.State) error {
-	client := testAccProvider.Meta().(*ArmClient).vmClient
+	client := testAccProvider.Meta().(*ArmClient).compute.VMClient
 	ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 	for _, rs := range s.RootModule().Resources {
@@ -193,7 +217,7 @@ resource "azurerm_network_interface" "test" {
   ip_configuration {
     name                          = "testconfiguration1"
     subnet_id                     = "${azurerm_subnet.test.id}"
-    private_ip_address_allocation = "dynamic"
+    private_ip_address_allocation = "Dynamic"
   }
 }
 
@@ -275,7 +299,7 @@ resource "azurerm_network_interface" "test" {
   ip_configuration {
     name                          = "testconfiguration1"
     subnet_id                     = "${azurerm_subnet.test.id}"
-    private_ip_address_allocation = "dynamic"
+    private_ip_address_allocation = "Dynamic"
   }
 }
 
@@ -286,7 +310,7 @@ resource "azurerm_storage_account" "test" {
   account_tier             = "Standard"
   account_replication_type = "LRS"
 
-  tags {
+  tags = {
     environment = "staging"
   }
 }
@@ -330,7 +354,7 @@ resource "azurerm_virtual_machine" "test" {
     disable_password_authentication = false
   }
 
-  tags {
+  tags = {
     environment = "Production"
     cost-center = "Ops"
   }
@@ -371,7 +395,7 @@ resource "azurerm_network_interface" "test" {
   ip_configuration {
     name                          = "testconfiguration1"
     subnet_id                     = "${azurerm_subnet.test.id}"
-    private_ip_address_allocation = "dynamic"
+    private_ip_address_allocation = "Dynamic"
   }
 }
 
@@ -382,7 +406,7 @@ resource "azurerm_storage_account" "test" {
   account_tier             = "Standard"
   account_replication_type = "LRS"
 
-  tags {
+  tags = {
     environment = "staging"
   }
 }
@@ -433,7 +457,7 @@ resource "azurerm_virtual_machine" "test" {
     disable_password_authentication = false
   }
 
-  tags {
+  tags = {
     environment = "Production"
     cost-center = "Ops"
   }
@@ -468,14 +492,14 @@ resource "azurerm_subnet" "test" {
 }
 
 resource "azurerm_network_interface" "test" {
-  name = "acctni-%d"
-  location = "${azurerm_resource_group.test.location}"
+  name                = "acctni-%d"
+  location            = "${azurerm_resource_group.test.location}"
   resource_group_name = "${azurerm_resource_group.test.name}"
 
   ip_configuration {
-    name = "testconfiguration1"
-    subnet_id = "${azurerm_subnet.test.id}"
-    private_ip_address_allocation = "dynamic"
+    name                          = "testconfiguration1"
+    subnet_id                     = "${azurerm_subnet.test.id}"
+    private_ip_address_allocation = "Dynamic"
   }
 }
 
@@ -486,7 +510,7 @@ resource "azurerm_storage_account" "test" {
   account_tier             = "Standard"
   account_replication_type = "LRS"
 
-  tags {
+  tags = {
     environment = "staging"
   }
 }
@@ -527,7 +551,7 @@ resource "azurerm_virtual_machine" "test" {
   }
 
   os_profile {
-    computer_name = "hn%d"
+    computer_name  = "hn%d"
     admin_username = "testadmin"
     admin_password = "Password1234!"
   }
@@ -541,10 +565,111 @@ resource "azurerm_virtual_machine" "test" {
     identity_ids = ["${azurerm_user_assigned_identity.test.id}"]
   }
 
-  tags {
+  tags = {
     environment = "Production"
     cost-center = "Ops"
   }
 }
 `, rInt, location, rInt, rInt, rInt, rInt, rString, rInt, rInt)
+}
+
+func testAccAzureRMVirtualMachinePPG(rInt int, location string, rString string) string {
+	return fmt.Sprintf(`
+resource "azurerm_resource_group" "test" {
+  name     = "acctestRG-%[1]d"
+  location = "%[2]s"
+}
+
+
+resource "azurerm_virtual_network" "test" {
+  name                = "acctvn-%[1]d"
+  address_space       = ["10.0.0.0/16"]
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+}
+
+resource "azurerm_subnet" "test" {
+  name                 = "acctsub-%[1]d"
+  resource_group_name  = "${azurerm_resource_group.test.name}"
+  virtual_network_name = "${azurerm_virtual_network.test.name}"
+  address_prefix       = "10.0.2.0/24"
+}
+
+resource "azurerm_network_interface" "test" {
+  name                = "acctni-%[1]d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+
+  ip_configuration {
+    name                          = "testconfiguration1"
+    subnet_id                     = "${azurerm_subnet.test.id}"
+    private_ip_address_allocation = "Dynamic"
+  }
+}
+
+resource "azurerm_storage_account" "test" {
+  name                     = "accsa%[1]d"
+  resource_group_name      = "${azurerm_resource_group.test.name}"
+  location                 = "${azurerm_resource_group.test.location}"
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+
+  tags = {
+    environment = "staging"
+  }
+}
+
+resource "azurerm_storage_container" "test" {
+  name                  = "vhds"
+  resource_group_name   = "${azurerm_resource_group.test.name}"
+  storage_account_name  = "${azurerm_storage_account.test.name}"
+  container_access_type = "private"
+}
+
+resource "azurerm_proximity_placement_group" "test" {
+	name 								= "accPPG-%[1]d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+}
+
+resource "azurerm_virtual_machine" "test" {
+  name                  = "acctvm-%[1]d"
+  location              = "${azurerm_resource_group.test.location}"
+  resource_group_name   = "${azurerm_resource_group.test.name}"
+  network_interface_ids = ["${azurerm_network_interface.test.id}"]
+  vm_size               = "Standard_D1_v2"
+
+  storage_image_reference {
+    publisher = "Canonical"
+    offer     = "UbuntuServer"
+    sku       = "16.04-LTS"
+    version   = "latest"
+  }
+
+  storage_os_disk {
+    name          = "myosdisk1"
+    vhd_uri       = "${azurerm_storage_account.test.primary_blob_endpoint}${azurerm_storage_container.test.name}/myosdisk1.vhd"
+    caching       = "ReadWrite"
+    create_option = "FromImage"
+    disk_size_gb  = "45"
+  }
+
+  os_profile {
+    computer_name  = "hn%[1]d"
+    admin_username = "testadmin"
+    admin_password = "Password1234!"
+  }
+
+  os_profile_linux_config {
+    disable_password_authentication = false
+  }
+
+  proximity_placement_group_id = "${azurerm_proximity_placement_group.test.id}"
+
+  tags = {
+    environment = "Production"
+    cost-center = "Ops"
+  }
+}
+`, rInt, location)
 }

@@ -66,7 +66,7 @@ func resourceArmLogicAppTriggerRecurrenceCreateUpdate(d *schema.ResourceData, me
 
 	logicAppId := d.Get("logic_app_id").(string)
 	name := d.Get("name").(string)
-	if err := resourceLogicAppTriggerUpdate(d, meta, logicAppId, name, trigger); err != nil {
+	if err := resourceLogicAppTriggerUpdate(d, meta, logicAppId, name, trigger, "azurerm_logic_app_trigger_recurrence"); err != nil {
 		return err
 	}
 
@@ -74,7 +74,7 @@ func resourceArmLogicAppTriggerRecurrenceCreateUpdate(d *schema.ResourceData, me
 }
 
 func resourceArmLogicAppTriggerRecurrenceRead(d *schema.ResourceData, meta interface{}) error {
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func resourceArmLogicAppTriggerRecurrenceRead(d *schema.ResourceData, meta inter
 }
 
 func resourceArmLogicAppTriggerRecurrenceDelete(d *schema.ResourceData, meta interface{}) error {
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}

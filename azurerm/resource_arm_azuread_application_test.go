@@ -131,14 +131,14 @@ func TestAccAzureRMActiveDirectoryApplication_update(t *testing.T) {
 	})
 }
 
-func testCheckAzureRMActiveDirectoryApplicationExists(name string) resource.TestCheckFunc {
+func testCheckAzureRMActiveDirectoryApplicationExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %q", name)
+			return fmt.Errorf("Not found: %q", resourceName)
 		}
 
-		client := testAccProvider.Meta().(*ArmClient).applicationsClient
+		client := testAccProvider.Meta().(*ArmClient).graph.ApplicationsClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 		resp, err := client.Get(ctx, rs.Primary.ID)
 
@@ -159,7 +159,7 @@ func testCheckAzureRMActiveDirectoryApplicationDestroy(s *terraform.State) error
 			continue
 		}
 
-		client := testAccProvider.Meta().(*ArmClient).applicationsClient
+		client := testAccProvider.Meta().(*ArmClient).graph.ApplicationsClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 		resp, err := client.Get(ctx, rs.Primary.ID)
 
@@ -200,7 +200,7 @@ func testAccAzureRMActiveDirectoryApplication_complete(id string) string {
 resource "azurerm_azuread_application" "test" {
   name                       = "acctest%s"
   homepage                   = "https://homepage-%s"
-  identifier_uris            = ["http://%s.hashicorptest.com"]
+  identifier_uris            = ["http://%s.hashicorptest.com/00000000-0000-0000-0000-00000000"]
   reply_urls                 = ["http://%s.hashicorptest.com"]
   oauth2_allow_implicit_flow = true
 }

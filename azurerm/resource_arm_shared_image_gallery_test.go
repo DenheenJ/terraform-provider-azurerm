@@ -5,15 +5,16 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 func TestAccAzureRMSharedImageGallery_basic(t *testing.T) {
 	resourceName := "azurerm_shared_image_gallery.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	location := testLocation()
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -36,11 +37,13 @@ func TestAccAzureRMSharedImageGallery_basic(t *testing.T) {
 		},
 	})
 }
-
-func TestAccAzureRMSharedImageGallery_complete(t *testing.T) {
+func TestAccAzureRMSharedImageGallery_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
 	resourceName := "azurerm_shared_image_gallery.test"
-	ri := acctest.RandInt()
-	location := testLocation()
+	ri := tf.AccRandTimeInt()
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -48,7 +51,31 @@ func TestAccAzureRMSharedImageGallery_complete(t *testing.T) {
 		CheckDestroy: testCheckAzureRMSharedImageGalleryDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccAzureRMSharedImageGallery_complete(ri, location),
+				Config: testAccAzureRMSharedImageGallery_basic(ri, testLocation()),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMSharedImageGalleryExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "description", ""),
+				),
+			},
+			{
+				Config:      testAccAzureRMSharedImageGallery_requiresImport(ri, testLocation()),
+				ExpectError: testRequiresImportError("azurerm_shared_image_gallery"),
+			},
+		},
+	})
+}
+
+func TestAccAzureRMSharedImageGallery_complete(t *testing.T) {
+	resourceName := "azurerm_shared_image_gallery.test"
+	ri := tf.AccRandTimeInt()
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMSharedImageGalleryDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMSharedImageGallery_complete(ri, testLocation()),
 				Check: resource.ComposeTestCheckFunc(
 					testCheckAzureRMSharedImageGalleryExists(resourceName),
 					resource.TestCheckResourceAttr(resourceName, "description", "Shared images and things."),
@@ -67,7 +94,7 @@ func TestAccAzureRMSharedImageGallery_complete(t *testing.T) {
 }
 
 func testCheckAzureRMSharedImageGalleryDestroy(s *terraform.State) error {
-	client := testAccProvider.Meta().(*ArmClient).galleriesClient
+	client := testAccProvider.Meta().(*ArmClient).compute.GalleriesClient
 	ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 	for _, rs := range s.RootModule().Resources {
@@ -94,12 +121,12 @@ func testCheckAzureRMSharedImageGalleryDestroy(s *terraform.State) error {
 	return nil
 }
 
-func testCheckAzureRMSharedImageGalleryExists(name string) resource.TestCheckFunc {
+func testCheckAzureRMSharedImageGalleryExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		galleryName := rs.Primary.Attributes["name"]
@@ -108,7 +135,7 @@ func testCheckAzureRMSharedImageGalleryExists(name string) resource.TestCheckFun
 			return fmt.Errorf("Bad: no resource group found in state for Shared Image Gallery: %s", galleryName)
 		}
 
-		client := testAccProvider.Meta().(*ArmClient).galleriesClient
+		client := testAccProvider.Meta().(*ArmClient).compute.GalleriesClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		resp, err := client.Get(ctx, resourceGroup, galleryName)
@@ -139,6 +166,18 @@ resource "azurerm_shared_image_gallery" "test" {
 `, rInt, location, rInt)
 }
 
+func testAccAzureRMSharedImageGallery_requiresImport(rInt int, location string) string {
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_shared_image_gallery" "import" {
+  name                = "${azurerm_shared_image_gallery.test.name}"
+  resource_group_name = "${azurerm_shared_image_gallery.test.resource_group_name}"
+  location            = "${azurerm_shared_image_gallery.test.location}"
+}
+`, testAccAzureRMSharedImageGallery_basic(rInt, location))
+}
+
 func testAccAzureRMSharedImageGallery_complete(rInt int, location string) string {
 	return fmt.Sprintf(`
 resource "azurerm_resource_group" "test" {
@@ -152,7 +191,7 @@ resource "azurerm_shared_image_gallery" "test" {
   location            = "${azurerm_resource_group.test.location}"
   description         = "Shared images and things."
 
-  tags {
+  tags = {
     Hello = "There"
     World = "Example"
   }

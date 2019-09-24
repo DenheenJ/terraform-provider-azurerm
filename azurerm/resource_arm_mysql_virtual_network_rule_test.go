@@ -5,16 +5,17 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/response"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 func TestAccAzureRMMySqlVirtualNetworkRule_basic(t *testing.T) {
 	resourceName := "azurerm_mysql_virtual_network_rule.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -31,9 +32,37 @@ func TestAccAzureRMMySqlVirtualNetworkRule_basic(t *testing.T) {
 	})
 }
 
+func TestAccAzureRMMySqlVirtualNetworkRule_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
+
+	resourceName := "azurerm_mysql_virtual_network_rule.test"
+	ri := tf.AccRandTimeInt()
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMMySqlVirtualNetworkRuleDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMMySqlVirtualNetworkRule_basic(ri, testLocation()),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMMySqlVirtualNetworkRuleExists(resourceName),
+				),
+			},
+			{
+				Config:      testAccAzureRMMySqlVirtualNetworkRule_requiresImport(ri, testLocation()),
+				ExpectError: testRequiresImportError("azurerm_mysql_virtual_network_rule"),
+			},
+		},
+	})
+}
+
 func TestAccAzureRMMySqlVirtualNetworkRule_switchSubnets(t *testing.T) {
 	resourceName := "azurerm_mysql_virtual_network_rule.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 
 	preConfig := testAccAzureRMMySqlVirtualNetworkRule_subnetSwitchPre(ri, testLocation())
 	postConfig := testAccAzureRMMySqlVirtualNetworkRule_subnetSwitchPost(ri, testLocation())
@@ -67,7 +96,7 @@ func TestAccAzureRMMySqlVirtualNetworkRule_switchSubnets(t *testing.T) {
 
 func TestAccAzureRMMySqlVirtualNetworkRule_disappears(t *testing.T) {
 	resourceName := "azurerm_mysql_virtual_network_rule.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	config := testAccAzureRMMySqlVirtualNetworkRule_basic(ri, testLocation())
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -91,7 +120,7 @@ func TestAccAzureRMMySqlVirtualNetworkRule_multipleSubnets(t *testing.T) {
 	resourceName1 := "azurerm_mysql_virtual_network_rule.rule1"
 	resourceName2 := "azurerm_mysql_virtual_network_rule.rule2"
 	resourceName3 := "azurerm_mysql_virtual_network_rule.rule3"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	config := testAccAzureRMMySqlVirtualNetworkRule_multipleSubnets(ri, testLocation())
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -111,18 +140,18 @@ func TestAccAzureRMMySqlVirtualNetworkRule_multipleSubnets(t *testing.T) {
 	})
 }
 
-func testCheckAzureRMMySqlVirtualNetworkRuleExists(name string) resource.TestCheckFunc {
+func testCheckAzureRMMySqlVirtualNetworkRuleExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		resourceGroup := rs.Primary.Attributes["resource_group_name"]
 		serverName := rs.Primary.Attributes["server_name"]
 		ruleName := rs.Primary.Attributes["name"]
 
-		client := testAccProvider.Meta().(*ArmClient).mysqlVirtualNetworkRulesClient
+		client := testAccProvider.Meta().(*ArmClient).mysql.VirtualNetworkRulesClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		resp, err := client.Get(ctx, resourceGroup, serverName, ruleName)
@@ -148,7 +177,7 @@ func testCheckAzureRMMySqlVirtualNetworkRuleDestroy(s *terraform.State) error {
 		serverName := rs.Primary.Attributes["server_name"]
 		ruleName := rs.Primary.Attributes["name"]
 
-		client := testAccProvider.Meta().(*ArmClient).mysqlVirtualNetworkRulesClient
+		client := testAccProvider.Meta().(*ArmClient).mysql.VirtualNetworkRulesClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		resp, err := client.Get(ctx, resourceGroup, serverName, ruleName)
@@ -166,19 +195,19 @@ func testCheckAzureRMMySqlVirtualNetworkRuleDestroy(s *terraform.State) error {
 	return nil
 }
 
-func testCheckAzureRMMySqlVirtualNetworkRuleDisappears(name string) resource.TestCheckFunc {
+func testCheckAzureRMMySqlVirtualNetworkRuleDisappears(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		resourceGroup := rs.Primary.Attributes["resource_group_name"]
 		serverName := rs.Primary.Attributes["server_name"]
 		ruleName := rs.Primary.Attributes["name"]
 
-		client := testAccProvider.Meta().(*ArmClient).mysqlVirtualNetworkRulesClient
+		client := testAccProvider.Meta().(*ArmClient).mysql.VirtualNetworkRulesClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		future, err := client.Delete(ctx, resourceGroup, serverName, ruleName)
@@ -257,6 +286,19 @@ resource "azurerm_mysql_virtual_network_rule" "test" {
   subnet_id           = "${azurerm_subnet.test.id}"
 }
 `, rInt, location, rInt, rInt, rInt, rInt)
+}
+
+func testAccAzureRMMySqlVirtualNetworkRule_requiresImport(rInt int, location string) string {
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_mysql_virtual_network_rule" "import" {
+  name                = "${azurerm_mysql_virtual_network_rule.test.name}"
+  resource_group_name = "${azurerm_mysql_virtual_network_rule.test.resource_group_name}"
+  server_name         = "${azurerm_mysql_virtual_network_rule.test.server_name}"
+  subnet_id           = "${azurerm_mysql_virtual_network_rule.test.subnet_id}"
+}
+`, testAccAzureRMMySqlVirtualNetworkRule_basic(rInt, location))
 }
 
 func testAccAzureRMMySqlVirtualNetworkRule_subnetSwitchPre(rInt int, location string) string {

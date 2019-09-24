@@ -5,10 +5,13 @@ import (
 	"log"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-08-01/network"
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2019-06-01/network"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/validate"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/locks"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
@@ -47,7 +50,7 @@ func resourceArmNetworkInterfaceBackendAddressPoolAssociation() *schema.Resource
 }
 
 func resourceArmNetworkInterfaceBackendAddressPoolAssociationCreate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).ifaceClient
+	client := meta.(*ArmClient).network.InterfacesClient
 	ctx := meta.(*ArmClient).StopContext
 
 	log.Printf("[INFO] preparing arguments for Network Interface <-> Load Balancer Backend Address Pool Association creation.")
@@ -56,7 +59,7 @@ func resourceArmNetworkInterfaceBackendAddressPoolAssociationCreate(d *schema.Re
 	ipConfigurationName := d.Get("ip_configuration_name").(string)
 	backendAddressPoolId := d.Get("backend_address_pool_id").(string)
 
-	id, err := parseAzureResourceID(networkInterfaceId)
+	id, err := azure.ParseAzureResourceID(networkInterfaceId)
 	if err != nil {
 		return err
 	}
@@ -64,8 +67,8 @@ func resourceArmNetworkInterfaceBackendAddressPoolAssociationCreate(d *schema.Re
 	networkInterfaceName := id.Path["networkInterfaces"]
 	resourceGroup := id.ResourceGroup
 
-	azureRMLockByName(networkInterfaceName, networkInterfaceResourceName)
-	defer azureRMUnlockByName(networkInterfaceName, networkInterfaceResourceName)
+	locks.ByName(networkInterfaceName, networkInterfaceResourceName)
+	defer locks.UnlockByName(networkInterfaceName, networkInterfaceResourceName)
 
 	read, err := client.Get(ctx, resourceGroup, networkInterfaceName, "")
 	if err != nil {
@@ -100,12 +103,16 @@ func resourceArmNetworkInterfaceBackendAddressPoolAssociationCreate(d *schema.Re
 	pools := make([]network.BackendAddressPool, 0)
 
 	// first double-check it doesn't exist
+	resourceId := fmt.Sprintf("%s/ipConfigurations/%s|%s", networkInterfaceId, ipConfigurationName, backendAddressPoolId)
 	if p.LoadBalancerBackendAddressPools != nil {
 		for _, existingPool := range *p.LoadBalancerBackendAddressPools {
 			if id := existingPool.ID; id != nil {
 				if *id == backendAddressPoolId {
-					// TODO: switch to using the common error once https://github.com/terraform-providers/terraform-provider-azurerm/pull/1746 is merged
-					return fmt.Errorf("A Network Interface <-> Load Balancer Backend Address Pool association exists between %q and %q - please import it!", networkInterfaceId, backendAddressPoolId)
+					if features.ShouldResourcesBeImported() {
+						return tf.ImportAsExistsError("azurerm_network_interface_backend_address_pool_association", resourceId)
+					}
+
+					continue
 				}
 
 				pools = append(pools, existingPool)
@@ -130,14 +137,13 @@ func resourceArmNetworkInterfaceBackendAddressPoolAssociationCreate(d *schema.Re
 		return fmt.Errorf("Error waiting for completion of Backend Address Pool Association for NIC %q (Resource Group %q): %+v", networkInterfaceName, resourceGroup, err)
 	}
 
-	resourceId := fmt.Sprintf("%s/ipConfigurations/%s|%s", networkInterfaceId, ipConfigurationName, backendAddressPoolId)
 	d.SetId(resourceId)
 
 	return resourceArmNetworkInterfaceBackendAddressPoolAssociationRead(d, meta)
 }
 
 func resourceArmNetworkInterfaceBackendAddressPoolAssociationRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).ifaceClient
+	client := meta.(*ArmClient).network.InterfacesClient
 	ctx := meta.(*ArmClient).StopContext
 
 	splitId := strings.Split(d.Id(), "|")
@@ -145,7 +151,7 @@ func resourceArmNetworkInterfaceBackendAddressPoolAssociationRead(d *schema.Reso
 		return fmt.Errorf("Expected ID to be in the format {networkInterfaceId}/ipConfigurations/{ipConfigurationName}|{backendAddressPoolId} but got %q", d.Id())
 	}
 
-	nicID, err := parseAzureResourceID(splitId[0])
+	nicID, err := azure.ParseAzureResourceID(splitId[0])
 	if err != nil {
 		return err
 	}
@@ -206,15 +212,13 @@ func resourceArmNetworkInterfaceBackendAddressPoolAssociationRead(d *schema.Reso
 
 	d.Set("backend_address_pool_id", backendAddressPoolId)
 	d.Set("ip_configuration_name", ipConfigurationName)
-	if id := read.ID; id != nil {
-		d.Set("network_interface_id", *id)
-	}
+	d.Set("network_interface_id", read.ID)
 
 	return nil
 }
 
 func resourceArmNetworkInterfaceBackendAddressPoolAssociationDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).ifaceClient
+	client := meta.(*ArmClient).network.InterfacesClient
 	ctx := meta.(*ArmClient).StopContext
 
 	splitId := strings.Split(d.Id(), "|")
@@ -222,7 +226,7 @@ func resourceArmNetworkInterfaceBackendAddressPoolAssociationDelete(d *schema.Re
 		return fmt.Errorf("Expected ID to be in the format {networkInterfaceId}/ipConfigurations/{ipConfigurationName}|{backendAddressPoolId} but got %q", d.Id())
 	}
 
-	nicID, err := parseAzureResourceID(splitId[0])
+	nicID, err := azure.ParseAzureResourceID(splitId[0])
 	if err != nil {
 		return err
 	}
@@ -232,8 +236,8 @@ func resourceArmNetworkInterfaceBackendAddressPoolAssociationDelete(d *schema.Re
 	resourceGroup := nicID.ResourceGroup
 	backendAddressPoolId := splitId[1]
 
-	azureRMLockByName(networkInterfaceName, networkInterfaceResourceName)
-	defer azureRMUnlockByName(networkInterfaceName, networkInterfaceResourceName)
+	locks.ByName(networkInterfaceName, networkInterfaceResourceName)
+	defer locks.UnlockByName(networkInterfaceName, networkInterfaceResourceName)
 
 	read, err := client.Get(ctx, resourceGroup, networkInterfaceName, "")
 	if err != nil {

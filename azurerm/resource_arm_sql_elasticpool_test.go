@@ -5,15 +5,15 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 )
 
 func TestAccAzureRMSqlElasticPool_basic(t *testing.T) {
 	resourceName := "azurerm_sql_elasticpool.test"
-	ri := acctest.RandInt()
-	config := testAccAzureRMSqlElasticPool_basic(ri, testLocation())
+	ri := tf.AccRandTimeInt()
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -21,7 +21,7 @@ func TestAccAzureRMSqlElasticPool_basic(t *testing.T) {
 		CheckDestroy: testCheckAzureRMSqlElasticPoolDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: config,
+				Config: testAccAzureRMSqlElasticPool_basic(ri, testLocation()),
 				Check: resource.ComposeTestCheckFunc(
 					testCheckAzureRMSqlElasticPoolExists(resourceName),
 				),
@@ -34,11 +34,13 @@ func TestAccAzureRMSqlElasticPool_basic(t *testing.T) {
 		},
 	})
 }
-
-func TestAccAzureRMSqlElasticPool_disappears(t *testing.T) {
+func TestAccAzureRMSqlElasticPool_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
 	resourceName := "azurerm_sql_elasticpool.test"
-	ri := acctest.RandInt()
-	config := testAccAzureRMSqlElasticPool_basic(ri, testLocation())
+	ri := tf.AccRandTimeInt()
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -46,7 +48,30 @@ func TestAccAzureRMSqlElasticPool_disappears(t *testing.T) {
 		CheckDestroy: testCheckAzureRMSqlElasticPoolDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: config,
+				Config: testAccAzureRMSqlElasticPool_basic(ri, testLocation()),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMSqlElasticPoolExists(resourceName),
+				),
+			},
+			{
+				Config:      testAccAzureRMSqlElasticPool_requiresImport(ri, testLocation()),
+				ExpectError: testRequiresImportError("azurerm_sql_elasticpool"),
+			},
+		},
+	})
+}
+
+func TestAccAzureRMSqlElasticPool_disappears(t *testing.T) {
+	resourceName := "azurerm_sql_elasticpool.test"
+	ri := tf.AccRandTimeInt()
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMSqlElasticPoolDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMSqlElasticPool_basic(ri, testLocation()),
 				Check: resource.ComposeTestCheckFunc(
 					testCheckAzureRMSqlElasticPoolExists(resourceName),
 					testCheckAzureRMSqlElasticPoolDisappears(resourceName),
@@ -59,7 +84,7 @@ func TestAccAzureRMSqlElasticPool_disappears(t *testing.T) {
 
 func TestAccAzureRMSqlElasticPool_resizeDtu(t *testing.T) {
 	resourceName := "azurerm_sql_elasticpool.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	location := testLocation()
 	preConfig := testAccAzureRMSqlElasticPool_basic(ri, location)
 	postConfig := testAccAzureRMSqlElasticPool_resizedDtu(ri, location)
@@ -89,18 +114,18 @@ func TestAccAzureRMSqlElasticPool_resizeDtu(t *testing.T) {
 	})
 }
 
-func testCheckAzureRMSqlElasticPoolExists(name string) resource.TestCheckFunc {
+func testCheckAzureRMSqlElasticPoolExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		resourceGroup := rs.Primary.Attributes["resource_group_name"]
 		serverName := rs.Primary.Attributes["server_name"]
 		poolName := rs.Primary.Attributes["name"]
 
-		client := testAccProvider.Meta().(*ArmClient).sqlElasticPoolsClient
+		client := testAccProvider.Meta().(*ArmClient).Sql.ElasticPoolsClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		resp, err := client.Get(ctx, resourceGroup, serverName, poolName)
@@ -109,7 +134,7 @@ func testCheckAzureRMSqlElasticPoolExists(name string) resource.TestCheckFunc {
 		}
 
 		if resp.StatusCode == http.StatusNotFound {
-			return fmt.Errorf("Bad: SQL Elastic Pool %q on server: %q (resource group: %q) does not exist", name, serverName, resourceGroup)
+			return fmt.Errorf("Bad: SQL Elastic Pool %q on server: %q (resource group: %q) does not exist", poolName, serverName, resourceGroup)
 		}
 
 		return nil
@@ -117,7 +142,7 @@ func testCheckAzureRMSqlElasticPoolExists(name string) resource.TestCheckFunc {
 }
 
 func testCheckAzureRMSqlElasticPoolDestroy(s *terraform.State) error {
-	client := testAccProvider.Meta().(*ArmClient).sqlElasticPoolsClient
+	client := testAccProvider.Meta().(*ArmClient).Sql.ElasticPoolsClient
 	ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 	for _, rs := range s.RootModule().Resources {
@@ -143,19 +168,19 @@ func testCheckAzureRMSqlElasticPoolDestroy(s *terraform.State) error {
 	return nil
 }
 
-func testCheckAzureRMSqlElasticPoolDisappears(name string) resource.TestCheckFunc {
+func testCheckAzureRMSqlElasticPoolDisappears(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		resourceGroup := rs.Primary.Attributes["resource_group_name"]
 		serverName := rs.Primary.Attributes["server_name"]
 		poolName := rs.Primary.Attributes["name"]
 
-		client := testAccProvider.Meta().(*ArmClient).sqlElasticPoolsClient
+		client := testAccProvider.Meta().(*ArmClient).Sql.ElasticPoolsClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		if _, err := client.Delete(ctx, resourceGroup, serverName, poolName); err != nil {
@@ -192,6 +217,22 @@ resource "azurerm_sql_elasticpool" "test" {
   pool_size           = 5000
 }
 `, rInt, location)
+}
+
+func testAccAzureRMSqlElasticPool_requiresImport(rInt int, location string) string {
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_sql_elasticpool" "import" {
+  name                = "${azurerm_sql_elasticpool.test.name}"
+  resource_group_name = "${azurerm_sql_elasticpool.test.resource_group_name}"
+  location            = "${azurerm_sql_elasticpool.test.location}"
+  server_name         = "${azurerm_sql_elasticpool.test.server_name}"
+  edition             = "${azurerm_sql_elasticpool.test.edition}"
+  dtu                 = "${azurerm_sql_elasticpool.test.dtu}"
+  pool_size           = "${azurerm_sql_elasticpool.test.pool_size}"
+}
+`, testAccAzureRMSqlElasticPool_basic(rInt, location))
 }
 
 func testAccAzureRMSqlElasticPool_resizedDtu(rInt int, location string) string {

@@ -12,12 +12,23 @@ import (
 	"github.com/hashicorp/terraform/helper/validation"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/response"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/suppress"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/validate"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/tags"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 func resourceArmAutoScaleSetting() *schema.Resource {
 	return &schema.Resource{
+		DeprecationMessage: `The 'azurerm_autoscale_setting' resource is deprecated in favour of the renamed version 'azurerm_monitor_autoscale_setting'.
+
+Information on migrating to the renamed resource can be found here: https://terraform.io/docs/providers/azurerm/guides/migrating-between-renamed-resources.html
+
+As such the existing 'azurerm_autoscale_setting' resource is deprecated and will be removed in the next major version of the AzureRM Provider (2.0).
+`,
+
 		Create: resourceArmAutoScaleSettingCreateUpdate,
 		Read:   resourceArmAutoScaleSettingRead,
 		Update: resourceArmAutoScaleSettingCreateUpdate,
@@ -34,9 +45,9 @@ func resourceArmAutoScaleSetting() *schema.Resource {
 				ValidateFunc: validate.NoEmptyStrings,
 			},
 
-			"resource_group_name": resourceGroupNameSchema(),
+			"resource_group_name": azure.SchemaResourceGroupName(),
 
-			"location": locationSchema(),
+			"location": azure.SchemaLocation(),
 
 			"target_resource_id": {
 				Type:         schema.TypeString,
@@ -71,17 +82,17 @@ func resourceArmAutoScaleSetting() *schema.Resource {
 									"minimum": {
 										Type:         schema.TypeInt,
 										Required:     true,
-										ValidateFunc: validation.IntBetween(1, 40),
+										ValidateFunc: validation.IntBetween(0, 1000),
 									},
 									"maximum": {
 										Type:         schema.TypeInt,
 										Required:     true,
-										ValidateFunc: validation.IntBetween(1, 40),
+										ValidateFunc: validation.IntBetween(0, 1000),
 									},
 									"default": {
 										Type:         schema.TypeInt,
 										Required:     true,
-										ValidateFunc: validation.IntBetween(1, 40),
+										ValidateFunc: validation.IntBetween(0, 1000),
 									},
 								},
 							},
@@ -111,7 +122,7 @@ func resourceArmAutoScaleSetting() *schema.Resource {
 												"time_grain": {
 													Type:         schema.TypeString,
 													Required:     true,
-													ValidateFunc: validateIso8601Duration(),
+													ValidateFunc: validate.ISO8601Duration,
 												},
 												"statistic": {
 													Type:     schema.TypeString,
@@ -122,12 +133,12 @@ func resourceArmAutoScaleSetting() *schema.Resource {
 														string(insights.MetricStatisticTypeMin),
 														string(insights.MetricStatisticTypeSum),
 													}, true),
-													DiffSuppressFunc: ignoreCaseDiffSuppressFunc,
+													DiffSuppressFunc: suppress.CaseDifference,
 												},
 												"time_window": {
 													Type:         schema.TypeString,
 													Required:     true,
-													ValidateFunc: validateIso8601Duration(),
+													ValidateFunc: validate.ISO8601Duration,
 												},
 												"time_aggregation": {
 													Type:     schema.TypeString,
@@ -139,7 +150,7 @@ func resourceArmAutoScaleSetting() *schema.Resource {
 														string(insights.TimeAggregationTypeMinimum),
 														string(insights.TimeAggregationTypeTotal),
 													}, true),
-													DiffSuppressFunc: ignoreCaseDiffSuppressFunc,
+													DiffSuppressFunc: suppress.CaseDifference,
 												},
 												"operator": {
 													Type:     schema.TypeString,
@@ -152,7 +163,7 @@ func resourceArmAutoScaleSetting() *schema.Resource {
 														string(insights.LessThanOrEqual),
 														string(insights.NotEquals),
 													}, true),
-													DiffSuppressFunc: ignoreCaseDiffSuppressFunc,
+													DiffSuppressFunc: suppress.CaseDifference,
 												},
 												"threshold": {
 													Type:     schema.TypeFloat,
@@ -174,7 +185,7 @@ func resourceArmAutoScaleSetting() *schema.Resource {
 														string(insights.ScaleDirectionDecrease),
 														string(insights.ScaleDirectionIncrease),
 													}, true),
-													DiffSuppressFunc: ignoreCaseDiffSuppressFunc,
+													DiffSuppressFunc: suppress.CaseDifference,
 												},
 												"type": {
 													Type:     schema.TypeString,
@@ -184,7 +195,7 @@ func resourceArmAutoScaleSetting() *schema.Resource {
 														string(insights.ExactCount),
 														string(insights.PercentChangeCount),
 													}, true),
-													DiffSuppressFunc: ignoreCaseDiffSuppressFunc,
+													DiffSuppressFunc: suppress.CaseDifference,
 												},
 												"value": {
 													Type:         schema.TypeInt,
@@ -194,7 +205,7 @@ func resourceArmAutoScaleSetting() *schema.Resource {
 												"cooldown": {
 													Type:         schema.TypeString,
 													Required:     true,
-													ValidateFunc: validateIso8601Duration(),
+													ValidateFunc: validate.ISO8601Duration,
 												},
 											},
 										},
@@ -217,12 +228,12 @@ func resourceArmAutoScaleSetting() *schema.Resource {
 									"start": {
 										Type:         schema.TypeString,
 										Required:     true,
-										ValidateFunc: validateRFC3339Date,
+										ValidateFunc: validate.RFC3339Time,
 									},
 									"end": {
 										Type:         schema.TypeString,
 										Required:     true,
-										ValidateFunc: validateRFC3339Date,
+										ValidateFunc: validate.RFC3339Time,
 									},
 								},
 							},
@@ -253,7 +264,7 @@ func resourceArmAutoScaleSetting() *schema.Resource {
 												"Saturday",
 												"Sunday",
 											}, true),
-											DiffSuppressFunc: ignoreCaseDiffSuppressFunc,
+											DiffSuppressFunc: suppress.CaseDifference,
 										},
 									},
 									"hours": {
@@ -326,6 +337,9 @@ func resourceArmAutoScaleSetting() *schema.Resource {
 									"properties": {
 										Type:     schema.TypeMap,
 										Optional: true,
+										Elem: &schema.Schema{
+											Type: schema.TypeString,
+										},
 									},
 								},
 							},
@@ -334,18 +348,32 @@ func resourceArmAutoScaleSetting() *schema.Resource {
 				},
 			},
 
-			"tags": tagsSchema(),
+			"tags": tags.Schema(),
 		},
 	}
 }
 
 func resourceArmAutoScaleSettingCreateUpdate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).autoscaleSettingsClient
+	client := meta.(*ArmClient).monitor.AutoscaleSettingsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	name := d.Get("name").(string)
 	resourceGroup := d.Get("resource_group_name").(string)
-	location := azureRMNormalizeLocation(d.Get("location").(string))
+
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
+		existing, err := client.Get(ctx, resourceGroup, name)
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing AutoScale Setting %q (Resource Group %q): %s", name, resourceGroup, err)
+			}
+		}
+
+		if existing.ID != nil && *existing.ID != "" {
+			return tf.ImportAsExistsError("azurerm_autoscale_setting", *existing.ID)
+		}
+	}
+
+	location := azure.NormalizeLocation(d.Get("location").(string))
 	enabled := d.Get("enabled").(bool)
 	targetResourceId := d.Get("target_resource_id").(string)
 
@@ -358,8 +386,8 @@ func resourceArmAutoScaleSettingCreateUpdate(d *schema.ResourceData, meta interf
 		return fmt.Errorf("Error expanding `profile`: %+v", err)
 	}
 
-	tags := d.Get("tags").(map[string]interface{})
-	expandedTags := expandTags(tags)
+	t := d.Get("tags").(map[string]interface{})
+	expandedTags := tags.Expand(t)
 
 	parameters := insights.AutoscaleSettingResource{
 		Location: utils.String(location),
@@ -390,10 +418,10 @@ func resourceArmAutoScaleSettingCreateUpdate(d *schema.ResourceData, meta interf
 }
 
 func resourceArmAutoScaleSettingRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).autoscaleSettingsClient
+	client := meta.(*ArmClient).monitor.AutoscaleSettingsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -414,7 +442,7 @@ func resourceArmAutoScaleSettingRead(d *schema.ResourceData, meta interface{}) e
 	d.Set("name", name)
 	d.Set("resource_group_name", resourceGroup)
 	if location := resp.Location; location != nil {
-		d.Set("location", azureRMNormalizeLocation(*location))
+		d.Set("location", azure.NormalizeLocation(*location))
 	}
 
 	d.Set("enabled", resp.Enabled)
@@ -434,17 +462,15 @@ func resourceArmAutoScaleSettingRead(d *schema.ResourceData, meta interface{}) e
 	}
 
 	// Return a new tag map filtered by the specified tag names.
-	tagMap := filterTags(resp.Tags, "$type")
-	flattenAndSetTags(d, tagMap)
-
-	return nil
+	tagMap := tags.Filter(resp.Tags, "$type")
+	return tags.FlattenAndSet(d, tagMap)
 }
 
 func resourceArmAutoScaleSettingDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).autoscaleSettingsClient
+	client := meta.(*ArmClient).monitor.AutoscaleSettingsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}

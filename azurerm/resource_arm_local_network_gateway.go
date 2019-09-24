@@ -3,17 +3,21 @@ package azurerm
 import (
 	"fmt"
 
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-08-01/network"
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2019-06-01/network"
 	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/response"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/tags"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 func resourceArmLocalNetworkGateway() *schema.Resource {
 	return &schema.Resource{
-		Create: resourceArmLocalNetworkGatewayCreate,
+		Create: resourceArmLocalNetworkGatewayCreateUpdate,
 		Read:   resourceArmLocalNetworkGatewayRead,
-		Update: resourceArmLocalNetworkGatewayCreate,
+		Update: resourceArmLocalNetworkGatewayCreateUpdate,
 		Delete: resourceArmLocalNetworkGatewayDelete,
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
@@ -26,9 +30,9 @@ func resourceArmLocalNetworkGateway() *schema.Resource {
 				ForceNew: true,
 			},
 
-			"location": locationSchema(),
+			"location": azure.SchemaLocation(),
 
-			"resource_group_name": resourceGroupNameSchema(),
+			"resource_group_name": azure.SchemaResourceGroupName(),
 
 			"gateway_address": {
 				Type:     schema.TypeString,
@@ -68,18 +72,32 @@ func resourceArmLocalNetworkGateway() *schema.Resource {
 				},
 			},
 
-			"tags": tagsSchema(),
+			"tags": tags.Schema(),
 		},
 	}
 }
 
-func resourceArmLocalNetworkGatewayCreate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).localNetConnClient
+func resourceArmLocalNetworkGatewayCreateUpdate(d *schema.ResourceData, meta interface{}) error {
+	client := meta.(*ArmClient).network.LocalNetworkGatewaysClient
 	ctx := meta.(*ArmClient).StopContext
 
 	name := d.Get("name").(string)
-	location := azureRMNormalizeLocation(d.Get("location").(string))
 	resGroup := d.Get("resource_group_name").(string)
+
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
+		existing, err := client.Get(ctx, resGroup, name)
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing Local Network Gateway %q (Resource Group %q): %s", name, resGroup, err)
+			}
+		}
+
+		if existing.ID != nil && *existing.ID != "" {
+			return tf.ImportAsExistsError("azurerm_local_network_gateway", *existing.ID)
+		}
+	}
+
+	location := azure.NormalizeLocation(d.Get("location").(string))
 	ipAddress := d.Get("gateway_address").(string)
 
 	addressSpaces := expandLocalNetworkGatewayAddressSpaces(d)
@@ -89,7 +107,7 @@ func resourceArmLocalNetworkGatewayCreate(d *schema.ResourceData, meta interface
 		return err
 	}
 
-	tags := d.Get("tags").(map[string]interface{})
+	t := d.Get("tags").(map[string]interface{})
 
 	gateway := network.LocalNetworkGateway{
 		Name:     &name,
@@ -101,7 +119,7 @@ func resourceArmLocalNetworkGatewayCreate(d *schema.ResourceData, meta interface
 			GatewayIPAddress: &ipAddress,
 			BgpSettings:      bgpSettings,
 		},
-		Tags: expandTags(tags),
+		Tags: tags.Expand(t),
 	}
 
 	future, err := client.CreateOrUpdate(ctx, resGroup, name, gateway)
@@ -127,7 +145,7 @@ func resourceArmLocalNetworkGatewayCreate(d *schema.ResourceData, meta interface
 }
 
 func resourceArmLocalNetworkGatewayRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).localNetConnClient
+	client := meta.(*ArmClient).network.LocalNetworkGatewaysClient
 	ctx := meta.(*ArmClient).StopContext
 
 	resGroup, name, err := resourceGroupAndLocalNetworkGatewayFromId(d.Id())
@@ -148,16 +166,14 @@ func resourceArmLocalNetworkGatewayRead(d *schema.ResourceData, meta interface{}
 	d.Set("name", resp.Name)
 	d.Set("resource_group_name", resGroup)
 	if location := resp.Location; location != nil {
-		d.Set("location", azureRMNormalizeLocation(*location))
+		d.Set("location", azure.NormalizeLocation(*location))
 	}
 
 	if props := resp.LocalNetworkGatewayPropertiesFormat; props != nil {
 		d.Set("gateway_address", props.GatewayIPAddress)
 
 		if lnas := props.LocalNetworkAddressSpace; lnas != nil {
-			if prefixes := lnas.AddressPrefixes; prefixes != nil {
-				d.Set("address_space", *prefixes)
-			}
+			d.Set("address_space", lnas.AddressPrefixes)
 		}
 		flattenedSettings := flattenLocalNetworkGatewayBGPSettings(props.BgpSettings)
 		if err := d.Set("bgp_settings", flattenedSettings); err != nil {
@@ -165,13 +181,11 @@ func resourceArmLocalNetworkGatewayRead(d *schema.ResourceData, meta interface{}
 		}
 	}
 
-	flattenAndSetTags(d, resp.Tags)
-
-	return nil
+	return tags.FlattenAndSet(d, resp.Tags)
 }
 
 func resourceArmLocalNetworkGatewayDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).localNetConnClient
+	client := meta.(*ArmClient).network.LocalNetworkGatewaysClient
 	ctx := meta.(*ArmClient).StopContext
 
 	resGroup, name, err := resourceGroupAndLocalNetworkGatewayFromId(d.Id())
@@ -200,7 +214,7 @@ func resourceArmLocalNetworkGatewayDelete(d *schema.ResourceData, meta interface
 }
 
 func resourceGroupAndLocalNetworkGatewayFromId(localNetworkGatewayId string) (string, string, error) {
-	id, err := parseAzureResourceID(localNetworkGatewayId)
+	id, err := azure.ParseAzureResourceID(localNetworkGatewayId)
 	if err != nil {
 		return "", "", err
 	}

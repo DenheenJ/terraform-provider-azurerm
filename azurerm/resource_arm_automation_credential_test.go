@@ -4,15 +4,16 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 func TestAccAzureRMAutomationCredential_basic(t *testing.T) {
 	resourceName := "azurerm_automation_credential.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -37,13 +38,13 @@ func TestAccAzureRMAutomationCredential_basic(t *testing.T) {
 }
 
 func TestAccAzureRMAutomationCredential_requiresImport(t *testing.T) {
-	if !requireResourcesToBeImported {
+	if !features.ShouldResourcesBeImported() {
 		t.Skip("Skipping since resources aren't required to be imported")
 		return
 	}
 
 	resourceName := "azurerm_automation_credential.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	location := testLocation()
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -67,7 +68,7 @@ func TestAccAzureRMAutomationCredential_requiresImport(t *testing.T) {
 
 func TestAccAzureRMAutomationCredential_complete(t *testing.T) {
 	resourceName := "azurerm_automation_credential.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -93,7 +94,7 @@ func TestAccAzureRMAutomationCredential_complete(t *testing.T) {
 }
 
 func testCheckAzureRMAutomationCredentialDestroy(s *terraform.State) error {
-	conn := testAccProvider.Meta().(*ArmClient).automationCredentialClient
+	conn := testAccProvider.Meta().(*ArmClient).automation.CredentialClient
 	ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 	for _, rs := range s.RootModule().Resources {
@@ -126,13 +127,13 @@ func testCheckAzureRMAutomationCredentialDestroy(s *terraform.State) error {
 	return nil
 }
 
-func testCheckAzureRMAutomationCredentialExists(name string) resource.TestCheckFunc {
+func testCheckAzureRMAutomationCredentialExists(resourceName string) resource.TestCheckFunc {
 
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		name := rs.Primary.Attributes["name"]
@@ -143,7 +144,7 @@ func testCheckAzureRMAutomationCredentialExists(name string) resource.TestCheckF
 			return fmt.Errorf("Bad: no resource group found in state for Automation Credential: '%s'", name)
 		}
 
-		conn := testAccProvider.Meta().(*ArmClient).automationCredentialClient
+		conn := testAccProvider.Meta().(*ArmClient).automation.CredentialClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		resp, err := conn.Get(ctx, resourceGroup, accName, name)

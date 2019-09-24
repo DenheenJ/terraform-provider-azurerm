@@ -5,10 +5,13 @@ import (
 	"log"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-08-01/network"
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2019-06-01/network"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/validate"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/locks"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
@@ -47,7 +50,7 @@ func resourceArmNetworkInterfaceNatRuleAssociation() *schema.Resource {
 }
 
 func resourceArmNetworkInterfaceNatRuleAssociationCreate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).ifaceClient
+	client := meta.(*ArmClient).network.InterfacesClient
 	ctx := meta.(*ArmClient).StopContext
 
 	log.Printf("[INFO] preparing arguments for Network Interface <-> Load Balancer NAT Rule Association creation.")
@@ -56,7 +59,7 @@ func resourceArmNetworkInterfaceNatRuleAssociationCreate(d *schema.ResourceData,
 	ipConfigurationName := d.Get("ip_configuration_name").(string)
 	natRuleId := d.Get("nat_rule_id").(string)
 
-	id, err := parseAzureResourceID(networkInterfaceId)
+	id, err := azure.ParseAzureResourceID(networkInterfaceId)
 	if err != nil {
 		return err
 	}
@@ -64,8 +67,8 @@ func resourceArmNetworkInterfaceNatRuleAssociationCreate(d *schema.ResourceData,
 	networkInterfaceName := id.Path["networkInterfaces"]
 	resourceGroup := id.ResourceGroup
 
-	azureRMLockByName(networkInterfaceName, networkInterfaceResourceName)
-	defer azureRMUnlockByName(networkInterfaceName, networkInterfaceResourceName)
+	locks.ByName(networkInterfaceName, networkInterfaceResourceName)
+	defer locks.UnlockByName(networkInterfaceName, networkInterfaceResourceName)
 
 	read, err := client.Get(ctx, resourceGroup, networkInterfaceName, "")
 	if err != nil {
@@ -100,12 +103,16 @@ func resourceArmNetworkInterfaceNatRuleAssociationCreate(d *schema.ResourceData,
 	rules := make([]network.InboundNatRule, 0)
 
 	// first double-check it doesn't exist
+	resourceId := fmt.Sprintf("%s/ipConfigurations/%s|%s", networkInterfaceId, ipConfigurationName, natRuleId)
 	if p.LoadBalancerInboundNatRules != nil {
 		for _, existingRule := range *p.LoadBalancerInboundNatRules {
 			if id := existingRule.ID; id != nil {
 				if *id == natRuleId {
-					// TODO: switch to using the common error once https://github.com/terraform-providers/terraform-provider-azurerm/pull/1746 is merged
-					return fmt.Errorf("A Network Interface <-> Load Balancer NAT Rule association exists between %q and %q - please import it!", networkInterfaceId, natRuleId)
+					if features.ShouldResourcesBeImported() {
+						return tf.ImportAsExistsError("azurerm_network_interface_nat_rule_association", resourceId)
+					}
+
+					continue
 				}
 
 				rules = append(rules, existingRule)
@@ -130,14 +137,13 @@ func resourceArmNetworkInterfaceNatRuleAssociationCreate(d *schema.ResourceData,
 		return fmt.Errorf("Error waiting for completion of NAT Rule Association for NIC %q (Resource Group %q): %+v", networkInterfaceName, resourceGroup, err)
 	}
 
-	resourceId := fmt.Sprintf("%s/ipConfigurations/%s|%s", networkInterfaceId, ipConfigurationName, natRuleId)
 	d.SetId(resourceId)
 
 	return resourceArmNetworkInterfaceNatRuleAssociationRead(d, meta)
 }
 
 func resourceArmNetworkInterfaceNatRuleAssociationRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).ifaceClient
+	client := meta.(*ArmClient).network.InterfacesClient
 	ctx := meta.(*ArmClient).StopContext
 
 	splitId := strings.Split(d.Id(), "|")
@@ -145,7 +151,7 @@ func resourceArmNetworkInterfaceNatRuleAssociationRead(d *schema.ResourceData, m
 		return fmt.Errorf("Expected ID to be in the format {networkInterfaceId}/ipConfigurations/{ipConfigurationName}|{natRuleId} but got %q", d.Id())
 	}
 
-	nicID, err := parseAzureResourceID(splitId[0])
+	nicID, err := azure.ParseAzureResourceID(splitId[0])
 	if err != nil {
 		return err
 	}
@@ -206,15 +212,13 @@ func resourceArmNetworkInterfaceNatRuleAssociationRead(d *schema.ResourceData, m
 
 	d.Set("ip_configuration_name", ipConfigurationName)
 	d.Set("nat_rule_id", natRuleId)
-	if id := read.ID; id != nil {
-		d.Set("network_interface_id", *id)
-	}
+	d.Set("network_interface_id", read.ID)
 
 	return nil
 }
 
 func resourceArmNetworkInterfaceNatRuleAssociationDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).ifaceClient
+	client := meta.(*ArmClient).network.InterfacesClient
 	ctx := meta.(*ArmClient).StopContext
 
 	splitId := strings.Split(d.Id(), "|")
@@ -222,7 +226,7 @@ func resourceArmNetworkInterfaceNatRuleAssociationDelete(d *schema.ResourceData,
 		return fmt.Errorf("Expected ID to be in the format {networkInterfaceId}/ipConfigurations/{ipConfigurationName}|{natRuleId} but got %q", d.Id())
 	}
 
-	nicID, err := parseAzureResourceID(splitId[0])
+	nicID, err := azure.ParseAzureResourceID(splitId[0])
 	if err != nil {
 		return err
 	}
@@ -232,8 +236,8 @@ func resourceArmNetworkInterfaceNatRuleAssociationDelete(d *schema.ResourceData,
 	resourceGroup := nicID.ResourceGroup
 	natRuleId := splitId[1]
 
-	azureRMLockByName(networkInterfaceName, networkInterfaceResourceName)
-	defer azureRMUnlockByName(networkInterfaceName, networkInterfaceResourceName)
+	locks.ByName(networkInterfaceName, networkInterfaceResourceName)
+	defer locks.UnlockByName(networkInterfaceName, networkInterfaceResourceName)
 
 	read, err := client.Get(ctx, resourceGroup, networkInterfaceName, "")
 	if err != nil {

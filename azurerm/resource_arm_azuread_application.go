@@ -13,6 +13,12 @@ import (
 
 func resourceArmActiveDirectoryApplication() *schema.Resource {
 	return &schema.Resource{
+		DeprecationMessage: `The Azure Active Directory resources have been split out into their own Provider.
+
+Information on migrating to the new AzureAD Provider can be found here: https://terraform.io/docs/providers/azurerm/guides/migrating-to-azuread.html
+
+As such the Azure Active Directory resources within the AzureRM Provider are now deprecated and will be removed in v2.0 of the AzureRM Provider.
+`,
 		Create: resourceArmActiveDirectoryApplicationCreate,
 		Read:   resourceArmActiveDirectoryApplicationRead,
 		Update: resourceArmActiveDirectoryApplicationUpdate,
@@ -75,7 +81,7 @@ func resourceArmActiveDirectoryApplication() *schema.Resource {
 }
 
 func resourceArmActiveDirectoryApplicationCreate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).applicationsClient
+	client := meta.(*ArmClient).graph.ApplicationsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	// NOTE: name isn't the Resource ID here, so we don't check it exists
@@ -105,7 +111,7 @@ func resourceArmActiveDirectoryApplicationCreate(d *schema.ResourceData, meta in
 }
 
 func resourceArmActiveDirectoryApplicationUpdate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).applicationsClient
+	client := meta.(*ArmClient).graph.ApplicationsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	name := d.Get("name").(string)
@@ -146,7 +152,7 @@ func resourceArmActiveDirectoryApplicationUpdate(d *schema.ResourceData, meta in
 }
 
 func resourceArmActiveDirectoryApplicationRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).applicationsClient
+	client := meta.(*ArmClient).graph.ApplicationsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	resp, err := client.Get(ctx, d.Id())
@@ -175,7 +181,7 @@ func resourceArmActiveDirectoryApplicationRead(d *schema.ResourceData, meta inte
 	}
 
 	replyUrls := make([]string, 0)
-	if s := resp.IdentifierUris; s != nil {
+	if s := resp.ReplyUrls; s != nil {
 		replyUrls = *s
 	}
 	if err := d.Set("reply_urls", replyUrls); err != nil {
@@ -186,7 +192,7 @@ func resourceArmActiveDirectoryApplicationRead(d *schema.ResourceData, meta inte
 }
 
 func resourceArmActiveDirectoryApplicationDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).applicationsClient
+	client := meta.(*ArmClient).graph.ApplicationsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	// in order to delete an application which is available to other tenants, we first have to disable this setting

@@ -4,14 +4,15 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 func TestAccAzureRMVirtualNetworkGateway_basic(t *testing.T) {
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	resourceName := "azurerm_virtual_network_gateway.test"
 	config := testAccAzureRMVirtualNetworkGateway_basic(ri, testLocation())
 
@@ -36,8 +37,37 @@ func TestAccAzureRMVirtualNetworkGateway_basic(t *testing.T) {
 	})
 }
 
+func TestAccAzureRMVirtualNetworkGateway_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
+
+	resourceName := "azurerm_virtual_network_gateway.test"
+	ri := tf.AccRandTimeInt()
+	location := testLocation()
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMVirtualNetworkGatewayDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMVirtualNetworkGateway_basic(ri, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMVirtualNetworkGatewayExists(resourceName),
+				),
+			},
+			{
+				Config:      testAccAzureRMVirtualNetworkGateway_requiresImport(ri, location),
+				ExpectError: testRequiresImportError("azurerm_virtual_network_gateway"),
+			},
+		},
+	})
+}
+
 func TestAccAzureRMVirtualNetworkGateway_lowerCaseSubnetName(t *testing.T) {
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	resourceName := "azurerm_virtual_network_gateway.test"
 	config := testAccAzureRMVirtualNetworkGateway_lowerCaseSubnetName(ri, testLocation())
 
@@ -63,7 +93,7 @@ func TestAccAzureRMVirtualNetworkGateway_lowerCaseSubnetName(t *testing.T) {
 }
 
 func TestAccAzureRMVirtualNetworkGateway_vpnGw1(t *testing.T) {
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	config := testAccAzureRMVirtualNetworkGateway_vpnGw1(ri, testLocation())
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -82,7 +112,7 @@ func TestAccAzureRMVirtualNetworkGateway_vpnGw1(t *testing.T) {
 }
 
 func TestAccAzureRMVirtualNetworkGateway_activeActive(t *testing.T) {
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	config := testAccAzureRMVirtualNetworkGateway_activeActive(ri, testLocation())
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -102,7 +132,7 @@ func TestAccAzureRMVirtualNetworkGateway_activeActive(t *testing.T) {
 
 func TestAccAzureRMVirtualNetworkGateway_standard(t *testing.T) {
 	resourceName := "azurerm_virtual_network_gateway.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	config := testAccAzureRMVirtualNetworkGateway_sku(ri, testLocation(), "Standard")
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -123,7 +153,7 @@ func TestAccAzureRMVirtualNetworkGateway_standard(t *testing.T) {
 
 func TestAccAzureRMVirtualNetworkGateway_vpnGw2(t *testing.T) {
 	resourceName := "azurerm_virtual_network_gateway.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	config := testAccAzureRMVirtualNetworkGateway_sku(ri, testLocation(), "VpnGw2")
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -144,7 +174,7 @@ func TestAccAzureRMVirtualNetworkGateway_vpnGw2(t *testing.T) {
 
 func TestAccAzureRMVirtualNetworkGateway_vpnGw3(t *testing.T) {
 	resourceName := "azurerm_virtual_network_gateway.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	config := testAccAzureRMVirtualNetworkGateway_sku(ri, testLocation(), "VpnGw3")
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -164,7 +194,7 @@ func TestAccAzureRMVirtualNetworkGateway_vpnGw3(t *testing.T) {
 }
 
 func TestAccAzureRMVirtualNetworkGateway_vpnClientConfig(t *testing.T) {
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	resourceName := "azurerm_virtual_network_gateway.test"
 	config := testAccAzureRMVirtualNetworkGateway_vpnClientConfig(ri, testLocation())
 
@@ -186,7 +216,7 @@ func TestAccAzureRMVirtualNetworkGateway_vpnClientConfig(t *testing.T) {
 }
 
 func TestAccAzureRMVirtualNetworkGateway_vpnClientConfigOpenVPN(t *testing.T) {
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	resourceName := "azurerm_virtual_network_gateway.test"
 	config := testAccAzureRMVirtualNetworkGateway_vpnClientConfigOpenVPN(ri, testLocation())
 
@@ -207,7 +237,7 @@ func TestAccAzureRMVirtualNetworkGateway_vpnClientConfigOpenVPN(t *testing.T) {
 }
 
 func TestAccAzureRMVirtualNetworkGateway_enableBgp(t *testing.T) {
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	resourceName := "azurerm_virtual_network_gateway.test"
 	config := testAccAzureRMVirtualNetworkGateway_enableBgp(ri, testLocation())
 
@@ -229,7 +259,7 @@ func TestAccAzureRMVirtualNetworkGateway_enableBgp(t *testing.T) {
 }
 
 func TestAccAzureRMVirtualNetworkGateway_expressRoute(t *testing.T) {
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	resourceName := "azurerm_virtual_network_gateway.test"
 	config := testAccAzureRMVirtualNetworkGateway_expressRoute(ri, testLocation())
 
@@ -250,17 +280,17 @@ func TestAccAzureRMVirtualNetworkGateway_expressRoute(t *testing.T) {
 	})
 }
 
-func testCheckAzureRMVirtualNetworkGatewayExists(name string) resource.TestCheckFunc {
+func testCheckAzureRMVirtualNetworkGatewayExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		gatewayName := rs.Primary.Attributes["name"]
 		resourceGroup := rs.Primary.Attributes["resource_group_name"]
 
-		client := testAccProvider.Meta().(*ArmClient).vnetGatewayClient
+		client := testAccProvider.Meta().(*ArmClient).network.VnetGatewayClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		resp, err := client.Get(ctx, resourceGroup, gatewayName)
@@ -277,7 +307,7 @@ func testCheckAzureRMVirtualNetworkGatewayExists(name string) resource.TestCheck
 }
 
 func testCheckAzureRMVirtualNetworkGatewayDestroy(s *terraform.State) error {
-	client := testAccProvider.Meta().(*ArmClient).vnetGatewayClient
+	client := testAccProvider.Meta().(*ArmClient).network.VnetGatewayClient
 	ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 	for _, rs := range s.RootModule().Resources {
@@ -324,10 +354,10 @@ resource "azurerm_subnet" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "acctestpip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "Dynamic"
+  name                = "acctestpip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Dynamic"
 }
 
 resource "azurerm_virtual_network_gateway" "test" {
@@ -346,6 +376,28 @@ resource "azurerm_virtual_network_gateway" "test" {
   }
 }
 `, rInt, location, rInt, rInt, rInt)
+}
+
+func testAccAzureRMVirtualNetworkGateway_requiresImport(rInt int, location string) string {
+	template := testAccAzureRMVirtualNetworkGateway_basic(rInt, location)
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_virtual_network_gateway" "import" {
+  name                = "${azurerm_virtual_network_gateway.test.name}"
+  location            = "${azurerm_virtual_network_gateway.test.location}"
+  resource_group_name = "${azurerm_virtual_network_gateway.test.resource_group_name}"
+  type                = "${azurerm_virtual_network_gateway.test.type}"
+  vpn_type            = "${azurerm_virtual_network_gateway.test.vpn_type}"
+  sku                 = "${azurerm_virtual_network_gateway.test.sku}"
+
+  ip_configuration {
+    public_ip_address_id          = "${azurerm_public_ip.test.id}"
+    private_ip_address_allocation = "Dynamic"
+    subnet_id                     = "${azurerm_subnet.test.id}"
+  }
+}
+`, template)
 }
 
 func testAccAzureRMVirtualNetworkGateway_lowerCaseSubnetName(rInt int, location string) string {
@@ -370,10 +422,10 @@ resource "azurerm_subnet" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "acctestpip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "Dynamic"
+  name                = "acctestpip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Dynamic"
 }
 
 resource "azurerm_virtual_network_gateway" "test" {
@@ -416,10 +468,10 @@ resource "azurerm_subnet" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "acctestpip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "Dynamic"
+  name                = "acctestpip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Dynamic"
 }
 
 resource "azurerm_virtual_network_gateway" "test" {
@@ -463,18 +515,18 @@ resource "azurerm_subnet" "test" {
 }
 
 resource "azurerm_public_ip" "first" {
-  name                         = "acctestpip1-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "Dynamic"
+  name                = "acctestpip1-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Dynamic"
 }
 
 resource "azurerm_public_ip" "second" {
   name = "acctestpip2-%d"
 
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "Dynamic"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Dynamic"
 }
 
 resource "azurerm_virtual_network_gateway" "test" {
@@ -535,10 +587,10 @@ resource "azurerm_subnet" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "acctestpip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "Dynamic"
+  name                = "acctestpip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Dynamic"
 }
 
 resource "azurerm_virtual_network_gateway" "test" {
@@ -590,10 +642,10 @@ resource "azurerm_subnet" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "acctestpip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "Dynamic"
+  name                = "acctestpip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Dynamic"
 }
 
 resource "azurerm_virtual_network_gateway" "test" {
@@ -642,10 +694,10 @@ resource "azurerm_subnet" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "acctestpip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "Dynamic"
+  name                = "acctestpip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Dynamic"
 }
 
 resource "azurerm_virtual_network_gateway" "test" {
@@ -688,10 +740,10 @@ resource "azurerm_subnet" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "acctestpip1-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "Dynamic"
+  name                = "acctestpip1-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Dynamic"
 }
 
 resource "azurerm_virtual_network_gateway" "test" {
@@ -735,10 +787,10 @@ resource "azurerm_subnet" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "acctestpip1-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "Dynamic"
+  name                = "acctestpip1-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Dynamic"
 }
 
 resource "azurerm_virtual_network_gateway" "test" {
@@ -746,9 +798,9 @@ resource "azurerm_virtual_network_gateway" "test" {
   location            = "${azurerm_resource_group.test.location}"
   resource_group_name = "${azurerm_resource_group.test.name}"
 
-  type       = "ExpressRoute"
-  vpn_type   = "PolicyBased"
-  sku        = "Standard"
+  type     = "ExpressRoute"
+  vpn_type = "PolicyBased"
+  sku      = "Standard"
 
   ip_configuration {
     public_ip_address_id          = "${azurerm_public_ip.test.id}"

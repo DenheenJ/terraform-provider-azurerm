@@ -10,6 +10,9 @@ import (
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/response"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/suppress"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/tags"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
@@ -32,9 +35,9 @@ func resourceArmDataLakeStore() *schema.Resource {
 				ValidateFunc: azure.ValidateDataLakeAccountName(),
 			},
 
-			"location": locationSchema(),
+			"location": azure.SchemaLocation(),
 
-			"resource_group_name": resourceGroupNameSchema(),
+			"resource_group_name": azure.SchemaResourceGroupName(),
 
 			"tier": {
 				Type:             schema.TypeString,
@@ -102,31 +105,45 @@ func resourceArmDataLakeStore() *schema.Resource {
 				Computed: true,
 			},
 
-			"tags": tagsSchema(),
+			"tags": tags.Schema(),
 		},
 	}
 }
 
 func resourceArmDateLakeStoreCreate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).dataLakeStoreAccountClient
+	client := meta.(*ArmClient).datalake.StoreAccountsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	name := d.Get("name").(string)
-	location := azureRMNormalizeLocation(d.Get("location").(string))
 	resourceGroup := d.Get("resource_group_name").(string)
+
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
+		existing, err := client.Get(ctx, resourceGroup, name)
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing Data Lake Store %q (Resource Group %q): %s", name, resourceGroup, err)
+			}
+		}
+
+		if existing.ID != nil && *existing.ID != "" {
+			return tf.ImportAsExistsError("azurerm_data_lake_store", *existing.ID)
+		}
+	}
+
+	location := azure.NormalizeLocation(d.Get("location").(string))
 	tier := d.Get("tier").(string)
 
 	encryptionState := account.EncryptionState(d.Get("encryption_state").(string))
 	encryptionType := account.EncryptionConfigType(d.Get("encryption_type").(string))
 	firewallState := account.FirewallState(d.Get("firewall_state").(string))
 	firewallAllowAzureIPs := account.FirewallAllowAzureIpsState(d.Get("firewall_allow_azure_ips").(string))
-	tags := d.Get("tags").(map[string]interface{})
+	t := d.Get("tags").(map[string]interface{})
 
 	log.Printf("[INFO] preparing arguments for Data Lake Store creation %q (Resource Group %q)", name, resourceGroup)
 
 	dateLakeStore := account.CreateDataLakeStoreAccountParameters{
 		Location: &location,
-		Tags:     expandTags(tags),
+		Tags:     tags.Expand(t),
 		CreateDataLakeStoreAccountProperties: &account.CreateDataLakeStoreAccountProperties{
 			NewTier:               account.TierType(tier),
 			FirewallState:         firewallState,
@@ -161,7 +178,7 @@ func resourceArmDateLakeStoreCreate(d *schema.ResourceData, meta interface{}) er
 }
 
 func resourceArmDateLakeStoreUpdate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).dataLakeStoreAccountClient
+	client := meta.(*ArmClient).datalake.StoreAccountsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	name := d.Get("name").(string)
@@ -169,7 +186,7 @@ func resourceArmDateLakeStoreUpdate(d *schema.ResourceData, meta interface{}) er
 	tier := d.Get("tier").(string)
 	firewallState := account.FirewallState(d.Get("firewall_state").(string))
 	firewallAllowAzureIPs := account.FirewallAllowAzureIpsState(d.Get("firewall_allow_azure_ips").(string))
-	tags := d.Get("tags").(map[string]interface{})
+	t := d.Get("tags").(map[string]interface{})
 
 	props := account.UpdateDataLakeStoreAccountParameters{
 		UpdateDataLakeStoreAccountProperties: &account.UpdateDataLakeStoreAccountProperties{
@@ -177,7 +194,7 @@ func resourceArmDateLakeStoreUpdate(d *schema.ResourceData, meta interface{}) er
 			FirewallState:         firewallState,
 			FirewallAllowAzureIps: firewallAllowAzureIPs,
 		},
-		Tags: expandTags(tags),
+		Tags: tags.Expand(t),
 	}
 
 	future, err := client.Update(ctx, resourceGroup, name, props)
@@ -193,10 +210,10 @@ func resourceArmDateLakeStoreUpdate(d *schema.ResourceData, meta interface{}) er
 }
 
 func resourceArmDateLakeStoreRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).dataLakeStoreAccountClient
+	client := meta.(*ArmClient).datalake.StoreAccountsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -217,7 +234,7 @@ func resourceArmDateLakeStoreRead(d *schema.ResourceData, meta interface{}) erro
 	d.Set("name", name)
 	d.Set("resource_group_name", resourceGroup)
 	if location := resp.Location; location != nil {
-		d.Set("location", azureRMNormalizeLocation(*location))
+		d.Set("location", azure.NormalizeLocation(*location))
 	}
 
 	if properties := resp.DataLakeStoreAccountProperties; properties != nil {
@@ -234,16 +251,14 @@ func resourceArmDateLakeStoreRead(d *schema.ResourceData, meta interface{}) erro
 		d.Set("endpoint", properties.Endpoint)
 	}
 
-	flattenAndSetTags(d, resp.Tags)
-
-	return nil
+	return tags.FlattenAndSet(d, resp.Tags)
 }
 
 func resourceArmDateLakeStoreDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).dataLakeStoreAccountClient
+	client := meta.(*ArmClient).datalake.StoreAccountsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}

@@ -8,7 +8,7 @@ description: |-
 
 # azurerm_cdn_profile
 
-Manage a CDN Profile to create a collection of CDN Endpoints.
+Manages a CDN Profile to create a collection of CDN Endpoints.
 
 ## Example Usage
 
@@ -24,7 +24,7 @@ resource "azurerm_cdn_profile" "test" {
   resource_group_name = "${azurerm_resource_group.test.name}"
   sku                 = "Standard_Verizon"
 
-  tags {
+  tags = {
     environment = "Production"
     cost_center = "MSFT"
   }

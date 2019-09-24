@@ -10,6 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
+
 	"github.com/Azure/azure-sdk-for-go/services/scheduler/mgmt/2016-03-01/scheduler"
 	"github.com/Azure/go-autorest/autorest/date"
 
@@ -49,7 +53,7 @@ func resourceArmSchedulerJob() *schema.Resource {
 				),
 			},
 
-			"resource_group_name": resourceGroupNameSchema(),
+			"resource_group_name": azure.SchemaResourceGroupName(),
 
 			"job_collection_name": {
 				Type:         schema.TypeString,
@@ -292,6 +296,9 @@ func resourceArmSchedulerJobActionWebSchema(propertyName string) *schema.Resourc
 			"headers": {
 				Type:     schema.TypeMap,
 				Optional: true,
+				Elem: &schema.Schema{
+					Type: schema.TypeString,
+				},
 			},
 
 			//authentication requires HTTPS
@@ -460,12 +467,25 @@ func resourceArmSchedulerJobCustomizeDiff(diff *schema.ResourceDiff, _ interface
 }
 
 func resourceArmSchedulerJobCreateUpdate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).schedulerJobsClient
+	client := meta.(*ArmClient).Scheduler.JobsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	name := d.Get("name").(string)
 	resourceGroup := d.Get("resource_group_name").(string)
 	jobCollection := d.Get("job_collection_name").(string)
+
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
+		existing, err := client.Get(ctx, resourceGroup, jobCollection, name)
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing Scheduler Job %q (resource group %q)", name, resourceGroup)
+			}
+		}
+
+		if existing.ID != nil && *existing.ID != "" {
+			return tf.ImportAsExistsError("azurerm_scheduler_job", *existing.ID)
+		}
+	}
 
 	job := scheduler.JobDefinition{
 		Properties: &scheduler.JobProperties{
@@ -504,10 +524,10 @@ func resourceArmSchedulerJobCreateUpdate(d *schema.ResourceData, meta interface{
 }
 
 func resourceArmSchedulerJobRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).schedulerJobsClient
+	client := meta.(*ArmClient).Scheduler.JobsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -598,10 +618,10 @@ func resourceArmSchedulerJobRead(d *schema.ResourceData, meta interface{}) error
 }
 
 func resourceArmSchedulerJobDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).schedulerJobsClient
+	client := meta.(*ArmClient).Scheduler.JobsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}

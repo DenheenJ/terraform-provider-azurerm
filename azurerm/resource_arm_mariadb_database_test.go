@@ -4,16 +4,17 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 func TestAccAzureRMMariaDbDatabase_basic(t *testing.T) {
 	resourceName := "azurerm_mariadb_database.test"
-	ri := acctest.RandInt()
-	config := testAccAzureRMMariaDbDatabase_basic(ri, testLocation())
+	ri := tf.AccRandTimeInt()
+	location := testLocation()
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -21,12 +22,46 @@ func TestAccAzureRMMariaDbDatabase_basic(t *testing.T) {
 		CheckDestroy: testCheckAzureRMMariaDbDatabaseDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: config,
+				Config: testAccAzureRMMariaDbDatabase_basic(ri, location),
 				Check: resource.ComposeTestCheckFunc(
 					testCheckAzureRMMariaDbDatabaseExists(resourceName),
 					resource.TestCheckResourceAttr(resourceName, "charset", "utf8"),
 					resource.TestCheckResourceAttr(resourceName, "collation", "utf8_general_ci"),
 				),
+			},
+			{
+				ResourceName:      resourceName,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+func TestAccAzureRMMariaDbDatabase_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
+
+	resourceName := "azurerm_mariadb_database.test"
+	ri := tf.AccRandTimeInt()
+	location := testLocation()
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMMariaDbDatabaseDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMMariaDbDatabase_basic(ri, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMMariaDbDatabaseExists(resourceName),
+				),
+			},
+			{
+				Config:      testAccAzureRMMariaDbDatabase_requiresImport(ri, location),
+				ExpectError: testRequiresImportError("azurerm_mariadb_database"),
 			},
 		},
 	})
@@ -47,7 +82,7 @@ func testCheckAzureRMMariaDbDatabaseExists(resourceName string) resource.TestChe
 			return fmt.Errorf("bad: no resource group found in state for MariaDB database: %q", name)
 		}
 
-		client := testAccProvider.Meta().(*ArmClient).mariadbDatabasesClient
+		client := testAccProvider.Meta().(*ArmClient).mariadb.DatabasesClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		resp, err := client.Get(ctx, resourceGroup, serverName, name)
@@ -63,7 +98,7 @@ func testCheckAzureRMMariaDbDatabaseExists(resourceName string) resource.TestChe
 }
 
 func testCheckAzureRMMariaDbDatabaseDestroy(s *terraform.State) error {
-	client := testAccProvider.Meta().(*ArmClient).mariadbDatabasesClient
+	client := testAccProvider.Meta().(*ArmClient).mariadb.DatabasesClient
 	ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 	for _, rs := range s.RootModule().Resources {
@@ -127,4 +162,19 @@ resource "azurerm_mariadb_database" "test" {
   collation           = "utf8_general_ci"
 }
 `, rInt, location, rInt, rInt)
+}
+
+func testAccAzureRMMariaDbDatabase_requiresImport(rInt int, location string) string {
+	template := testAccAzureRMMariaDbDatabase_basic(rInt, location)
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_mariadb_database" "import" {
+  name                = "${azurerm_mariadb_database.test.name}"
+  resource_group_name = "${azurerm_mariadb_database.test.resource_group_name}"
+  server_name         = "${azurerm_mariadb_database.test.server_name}"
+  charset             = "${azurerm_mariadb_database.test.charset}"
+  collation           = "${azurerm_mariadb_database.test.collation}"
+}
+`, template)
 }

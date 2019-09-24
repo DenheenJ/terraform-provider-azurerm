@@ -3,17 +3,22 @@ package azurerm
 import (
 	"fmt"
 
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-08-01/network"
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2019-06-01/network"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/helper/validation"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/suppress"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/locks"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 func resourceArmNetworkSecurityRule() *schema.Resource {
 	return &schema.Resource{
-		Create: resourceArmNetworkSecurityRuleCreate,
+		Create: resourceArmNetworkSecurityRuleCreateUpdate,
 		Read:   resourceArmNetworkSecurityRuleRead,
-		Update: resourceArmNetworkSecurityRuleCreate,
+		Update: resourceArmNetworkSecurityRuleCreateUpdate,
 		Delete: resourceArmNetworkSecurityRuleDelete,
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
@@ -26,7 +31,7 @@ func resourceArmNetworkSecurityRule() *schema.Resource {
 				ForceNew: true,
 			},
 
-			"resource_group_name": resourceGroupNameSchema(),
+			"resource_group_name": azure.SchemaResourceGroupName(),
 
 			"network_security_group_name": {
 				Type:     schema.TypeString,
@@ -48,7 +53,7 @@ func resourceArmNetworkSecurityRule() *schema.Resource {
 					string(network.SecurityRuleProtocolTCP),
 					string(network.SecurityRuleProtocolUDP),
 				}, true),
-				DiffSuppressFunc: ignoreCaseDiffSuppressFunc,
+				DiffSuppressFunc: suppress.CaseDifference,
 			},
 
 			"source_port_range": {
@@ -107,6 +112,7 @@ func resourceArmNetworkSecurityRule() *schema.Resource {
 				ConflictsWith: []string{"destination_address_prefix"},
 			},
 
+			//lintignore:S018
 			"source_application_security_group_ids": {
 				Type:     schema.TypeSet,
 				MaxItems: 1,
@@ -115,6 +121,7 @@ func resourceArmNetworkSecurityRule() *schema.Resource {
 				Set:      schema.HashString,
 			},
 
+			//lintignore:S018
 			"destination_application_security_group_ids": {
 				Type:     schema.TypeSet,
 				MaxItems: 1,
@@ -130,7 +137,7 @@ func resourceArmNetworkSecurityRule() *schema.Resource {
 					string(network.SecurityRuleAccessAllow),
 					string(network.SecurityRuleAccessDeny),
 				}, true),
-				DiffSuppressFunc: ignoreCaseDiffSuppressFunc,
+				DiffSuppressFunc: suppress.CaseDifference,
 			},
 
 			"priority": {
@@ -146,19 +153,32 @@ func resourceArmNetworkSecurityRule() *schema.Resource {
 					string(network.SecurityRuleDirectionInbound),
 					string(network.SecurityRuleDirectionOutbound),
 				}, true),
-				DiffSuppressFunc: ignoreCaseDiffSuppressFunc,
+				DiffSuppressFunc: suppress.CaseDifference,
 			},
 		},
 	}
 }
 
-func resourceArmNetworkSecurityRuleCreate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).secRuleClient
+func resourceArmNetworkSecurityRuleCreateUpdate(d *schema.ResourceData, meta interface{}) error {
+	client := meta.(*ArmClient).network.SecurityRuleClient
 	ctx := meta.(*ArmClient).StopContext
 
 	name := d.Get("name").(string)
 	nsgName := d.Get("network_security_group_name").(string)
 	resGroup := d.Get("resource_group_name").(string)
+
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
+		existing, err := client.Get(ctx, resGroup, nsgName, name)
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing Rule %q (Network Security Group %q / Resource Group %q): %s", name, nsgName, resGroup, err)
+			}
+		}
+
+		if existing.ID != nil && *existing.ID != "" {
+			return tf.ImportAsExistsError("azurerm_network_security_rule", *existing.ID)
+		}
+	}
 
 	sourcePortRange := d.Get("source_port_range").(string)
 	destinationPortRange := d.Get("destination_port_range").(string)
@@ -169,8 +189,8 @@ func resourceArmNetworkSecurityRuleCreate(d *schema.ResourceData, meta interface
 	direction := d.Get("direction").(string)
 	protocol := d.Get("protocol").(string)
 
-	azureRMLockByName(nsgName, networkSecurityGroupResourceName)
-	defer azureRMUnlockByName(nsgName, networkSecurityGroupResourceName)
+	locks.ByName(nsgName, networkSecurityGroupResourceName)
+	defer locks.UnlockByName(nsgName, networkSecurityGroupResourceName)
 
 	rule := network.SecurityRule{
 		Name: &name,
@@ -276,10 +296,10 @@ func resourceArmNetworkSecurityRuleCreate(d *schema.ResourceData, meta interface
 }
 
 func resourceArmNetworkSecurityRuleRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).secRuleClient
+	client := meta.(*ArmClient).network.SecurityRuleClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -314,16 +334,24 @@ func resourceArmNetworkSecurityRuleRead(d *schema.ResourceData, meta interface{}
 		d.Set("access", string(props.Access))
 		d.Set("priority", int(*props.Priority))
 		d.Set("direction", string(props.Direction))
+
+		if err := d.Set("source_application_security_group_ids", flattenApplicationSecurityGroupIds(props.SourceApplicationSecurityGroups)); err != nil {
+			return fmt.Errorf("Error setting `source_application_security_group_ids`: %+v", err)
+		}
+
+		if err := d.Set("destination_application_security_group_ids", flattenApplicationSecurityGroupIds(props.DestinationApplicationSecurityGroups)); err != nil {
+			return fmt.Errorf("Error setting `source_application_security_group_ids`: %+v", err)
+		}
 	}
 
 	return nil
 }
 
 func resourceArmNetworkSecurityRuleDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).secRuleClient
+	client := meta.(*ArmClient).network.SecurityRuleClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -331,8 +359,8 @@ func resourceArmNetworkSecurityRuleDelete(d *schema.ResourceData, meta interface
 	nsgName := id.Path["networkSecurityGroups"]
 	sgRuleName := id.Path["securityRules"]
 
-	azureRMLockByName(nsgName, networkSecurityGroupResourceName)
-	defer azureRMUnlockByName(nsgName, networkSecurityGroupResourceName)
+	locks.ByName(nsgName, networkSecurityGroupResourceName)
+	defer locks.UnlockByName(nsgName, networkSecurityGroupResourceName)
 
 	future, err := client.Delete(ctx, resGroup, nsgName, sgRuleName)
 	if err != nil {
@@ -344,4 +372,16 @@ func resourceArmNetworkSecurityRuleDelete(d *schema.ResourceData, meta interface
 	}
 
 	return nil
+}
+
+func flattenApplicationSecurityGroupIds(groups *[]network.ApplicationSecurityGroup) []string {
+	ids := make([]string, 0)
+
+	if groups != nil {
+		for _, v := range *groups {
+			ids = append(ids, *v.ID)
+		}
+	}
+
+	return ids
 }

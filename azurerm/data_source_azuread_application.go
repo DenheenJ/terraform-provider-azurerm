@@ -11,6 +11,12 @@ import (
 
 func dataSourceArmAzureADApplication() *schema.Resource {
 	return &schema.Resource{
+		DeprecationMessage: `The Azure Active Directory resources have been split out into their own Provider.
+
+Information on migrating to the new AzureAD Provider can be found here: https://terraform.io/docs/providers/azurerm/guides/migrating-to-azuread.html
+
+As such the Azure Active Directory resources within the AzureRM Provider are now deprecated and will be removed in v2.0 of the AzureRM Provider.
+`,
 		Read: dataSourceArmAzureADApplicationRead,
 
 		Schema: map[string]*schema.Schema{
@@ -68,7 +74,7 @@ func dataSourceArmAzureADApplication() *schema.Resource {
 }
 
 func dataSourceArmAzureADApplicationRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).applicationsClient
+	client := meta.(*ArmClient).graph.ApplicationsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	var application graphrbac.Application
@@ -126,16 +132,12 @@ func dataSourceArmAzureADApplicationRead(d *schema.ResourceData, meta interface{
 	d.Set("available_to_other_tenants", application.AvailableToOtherTenants)
 	d.Set("oauth2_allow_implicit_flow", application.Oauth2AllowImplicitFlow)
 
-	if s := application.IdentifierUris; s != nil {
-		if err := d.Set("identifier_uris", *s); err != nil {
-			return fmt.Errorf("Error setting `identifier_uris`: %+v", err)
-		}
+	if err := d.Set("identifier_uris", application.IdentifierUris); err != nil {
+		return fmt.Errorf("Error setting `identifier_uris`: %+v", err)
 	}
 
-	if s := application.ReplyUrls; s != nil {
-		if err := d.Set("reply_urls", *s); err != nil {
-			return fmt.Errorf("Error setting `reply_urls`: %+v", err)
-		}
+	if err := d.Set("reply_urls", application.ReplyUrls); err != nil {
+		return fmt.Errorf("Error setting `reply_urls`: %+v", err)
 	}
 
 	return nil

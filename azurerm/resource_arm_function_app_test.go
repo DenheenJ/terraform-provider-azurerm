@@ -2,19 +2,23 @@ package azurerm
 
 import (
 	"fmt"
-	"regexp"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/validate"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 
 	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 func TestAccAzureRMFunctionApp_basic(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	config := testAccAzureRMFunctionApp_basic(ri, rs, testLocation())
 
@@ -29,6 +33,8 @@ func TestAccAzureRMFunctionApp_basic(t *testing.T) {
 					testCheckAzureRMFunctionAppExists(resourceName),
 					testCheckAzureRMFunctionAppHasNoContentShare(resourceName),
 					resource.TestCheckResourceAttr(resourceName, "version", "~1"),
+					resource.TestCheckResourceAttrSet(resourceName, "outbound_ip_addresses"),
+					resource.TestCheckResourceAttrSet(resourceName, "possible_outbound_ip_addresses"),
 				),
 			},
 			{
@@ -40,9 +46,41 @@ func TestAccAzureRMFunctionApp_basic(t *testing.T) {
 	})
 }
 
+func TestAccAzureRMFunctionApp_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
+
+	resourceName := "azurerm_function_app.test"
+	ri := tf.AccRandTimeInt()
+
+	location := testLocation()
+	rs := strings.ToLower(acctest.RandString(11))
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMFunctionAppDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMFunctionApp_basic(ri, rs, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMFunctionAppExists(resourceName),
+					testCheckAzureRMFunctionAppHasNoContentShare(resourceName),
+				),
+			},
+			{
+				Config:      testAccAzureRMFunctionApp_requiresImport(ri, rs, location),
+				ExpectError: testRequiresImportError("azurerm_function_app"),
+			},
+		},
+	})
+}
+
 func TestAccAzureRMFunctionApp_tags(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	config := testAccAzureRMFunctionApp_tags(ri, rs, testLocation())
 
@@ -70,7 +108,7 @@ func TestAccAzureRMFunctionApp_tags(t *testing.T) {
 
 func TestAccAzureRMFunctionApp_tagsUpdate(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	config := testAccAzureRMFunctionApp_tags(ri, rs, testLocation())
 	updatedConfig := testAccAzureRMFunctionApp_tagsUpdated(ri, rs, testLocation())
@@ -103,7 +141,7 @@ func TestAccAzureRMFunctionApp_tagsUpdate(t *testing.T) {
 
 func TestAccAzureRMFunctionApp_appSettings(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	config := testAccAzureRMFunctionApp_basic(ri, rs, testLocation())
 	updatedConfig := testAccAzureRMFunctionApp_appSettings(ri, rs, testLocation())
@@ -147,7 +185,7 @@ func TestAccAzureRMFunctionApp_appSettings(t *testing.T) {
 
 func TestAccAzureRMFunctionApp_siteConfig(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	config := testAccAzureRMFunctionApp_alwaysOn(ri, rs, testLocation())
 
@@ -172,9 +210,37 @@ func TestAccAzureRMFunctionApp_siteConfig(t *testing.T) {
 	})
 }
 
+func TestAccAzureRMFunctionApp_linuxFxVersion(t *testing.T) {
+	resourceName := "azurerm_function_app.test"
+	ri := tf.AccRandTimeInt()
+	rs := strings.ToLower(acctest.RandString(11))
+	config := testAccAzureRMFunctionApp_linuxFxVersion(ri, rs, testLocation())
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMFunctionAppDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMFunctionAppExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "kind", "functionapp,linux,container"),
+					resource.TestCheckResourceAttr(resourceName, "site_config.0.linux_fx_version", "DOCKER|(golang:latest)"),
+				),
+			},
+			{
+				ResourceName:      resourceName,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
 func TestAccAzureRMFunctionApp_connectionStrings(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	config := testAccAzureRMFunctionApp_connectionStrings(ri, rs, testLocation())
 
@@ -203,12 +269,13 @@ func TestAccAzureRMFunctionApp_connectionStrings(t *testing.T) {
 
 func TestAccAzureRMFunctionApp_siteConfigMulti(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	configBase := testAccAzureRMFunctionApp_basic(ri, rs, testLocation())
 	configUpdate1 := testAccAzureRMFunctionApp_appSettings(ri, rs, testLocation())
 	configUpdate2 := testAccAzureRMFunctionApp_appSettingsAlwaysOn(ri, rs, testLocation())
-	configUpdate3 := testAccAzureRMFunctionApp_appSettingsAlwaysOnConnectionStrings(ri, rs, testLocation())
+	configUpdate3 := testAccAzureRMFunctionApp_appSettingsAlwaysOnLinuxFxVersion(ri, rs, testLocation())
+	configUpdate4 := testAccAzureRMFunctionApp_appSettingsAlwaysOnLinuxFxVersionConnectionStrings(ri, rs, testLocation())
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -243,9 +310,22 @@ func TestAccAzureRMFunctionApp_siteConfigMulti(t *testing.T) {
 				Config: configUpdate3,
 				Check: resource.ComposeTestCheckFunc(
 					testCheckAzureRMFunctionAppExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "kind", "functionapp,linux,container"),
 					resource.TestCheckResourceAttr(resourceName, "app_settings.%", "1"),
 					resource.TestCheckResourceAttr(resourceName, "app_settings.hello", "world"),
 					resource.TestCheckResourceAttr(resourceName, "site_config.0.always_on", "true"),
+					resource.TestCheckResourceAttr(resourceName, "site_config.0.linux_fx_version", "DOCKER|(golang:latest)"),
+				),
+			},
+			{
+				Config: configUpdate4,
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMFunctionAppExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "kind", "functionapp,linux,container"),
+					resource.TestCheckResourceAttr(resourceName, "app_settings.%", "1"),
+					resource.TestCheckResourceAttr(resourceName, "app_settings.hello", "world"),
+					resource.TestCheckResourceAttr(resourceName, "site_config.0.always_on", "true"),
+					resource.TestCheckResourceAttr(resourceName, "site_config.0.linux_fx_version", "DOCKER|(golang:latest)"),
 					resource.TestCheckResourceAttr(resourceName, "connection_string.0.name", "Example"),
 					resource.TestCheckResourceAttr(resourceName, "connection_string.0.value", "some-postgresql-connection-string"),
 					resource.TestCheckResourceAttr(resourceName, "connection_string.0.type", "PostgreSQL"),
@@ -257,7 +337,7 @@ func TestAccAzureRMFunctionApp_siteConfigMulti(t *testing.T) {
 
 func TestAccAzureRMFunctionApp_updateVersion(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	preConfig := testAccAzureRMFunctionApp_version(ri, rs, testLocation(), "~1")
 	postConfig := testAccAzureRMFunctionApp_version(ri, rs, testLocation(), "~2")
@@ -287,7 +367,7 @@ func TestAccAzureRMFunctionApp_updateVersion(t *testing.T) {
 
 func TestAccAzureRMFunctionApp_3264bit(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	location := testLocation()
 	config := testAccAzureRMFunctionApp_basic(ri, rs, location)
@@ -318,7 +398,7 @@ func TestAccAzureRMFunctionApp_3264bit(t *testing.T) {
 
 func TestAccAzureRMFunctionApp_httpsOnly(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	location := testLocation()
 	config := testAccAzureRMFunctionApp_httpsOnly(ri, rs, location)
@@ -341,7 +421,7 @@ func TestAccAzureRMFunctionApp_httpsOnly(t *testing.T) {
 
 func TestAccAzureRMFunctionApp_consumptionPlan(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	location := testLocation()
 	config := testAccAzureRMFunctionApp_consumptionPlan(ri, rs, location)
@@ -365,7 +445,7 @@ func TestAccAzureRMFunctionApp_consumptionPlan(t *testing.T) {
 
 func TestAccAzureRMFunctionApp_consumptionPlanUppercaseName(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	location := testLocation()
 	config := testAccAzureRMFunctionApp_consumptionPlanUppercaseName(ri, rs, location)
@@ -394,11 +474,9 @@ func TestAccAzureRMFunctionApp_consumptionPlanUppercaseName(t *testing.T) {
 
 func TestAccAzureRMFunctionApp_createIdentity(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	config := testAccAzureRMFunctionApp_basicIdentity(ri, rs, testLocation())
-
-	uuidMatch := regexp.MustCompile("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[8|9|aA|bB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$")
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -411,8 +489,8 @@ func TestAccAzureRMFunctionApp_createIdentity(t *testing.T) {
 					testCheckAzureRMFunctionAppExists(resourceName),
 					resource.TestCheckResourceAttr(resourceName, "identity.#", "1"),
 					resource.TestCheckResourceAttr(resourceName, "identity.0.type", "SystemAssigned"),
-					resource.TestMatchResourceAttr(resourceName, "identity.0.principal_id", uuidMatch),
-					resource.TestMatchResourceAttr(resourceName, "identity.0.tenant_id", uuidMatch),
+					resource.TestMatchResourceAttr(resourceName, "identity.0.principal_id", validate.UUIDRegExp),
+					resource.TestMatchResourceAttr(resourceName, "identity.0.tenant_id", validate.UUIDRegExp),
 				),
 			},
 		},
@@ -421,13 +499,11 @@ func TestAccAzureRMFunctionApp_createIdentity(t *testing.T) {
 
 func TestAccAzureRMFunctionApp_updateIdentity(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 
 	preConfig := testAccAzureRMFunctionApp_basic(ri, rs, testLocation())
 	postConfig := testAccAzureRMFunctionApp_basicIdentity(ri, rs, testLocation())
-
-	uuidMatch := regexp.MustCompile("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[8|9|aA|bB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$")
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -447,8 +523,8 @@ func TestAccAzureRMFunctionApp_updateIdentity(t *testing.T) {
 					testCheckAzureRMFunctionAppExists(resourceName),
 					resource.TestCheckResourceAttr(resourceName, "identity.#", "1"),
 					resource.TestCheckResourceAttr(resourceName, "identity.0.type", "SystemAssigned"),
-					resource.TestMatchResourceAttr(resourceName, "identity.0.principal_id", uuidMatch),
-					resource.TestMatchResourceAttr(resourceName, "identity.0.tenant_id", uuidMatch),
+					resource.TestMatchResourceAttr(resourceName, "identity.0.principal_id", validate.UUIDRegExp),
+					resource.TestMatchResourceAttr(resourceName, "identity.0.tenant_id", validate.UUIDRegExp),
 				),
 			},
 		},
@@ -457,11 +533,11 @@ func TestAccAzureRMFunctionApp_updateIdentity(t *testing.T) {
 
 func TestAccAzureRMFunctionApp_loggingDisabled(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	config := testAccAzureRMFunctionApp_loggingDisabled(ri, rs, testLocation())
 
-	resource.Test(t, resource.TestCase{
+	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
 		Providers:    testAccProviders,
 		CheckDestroy: testCheckAzureRMFunctionAppDestroy,
@@ -485,14 +561,14 @@ func TestAccAzureRMFunctionApp_loggingDisabled(t *testing.T) {
 
 func TestAccAzureRMFunctionApp_updateLogging(t *testing.T) {
 	resourceName := "azurerm_function_app.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	location := testLocation()
 
 	enabledConfig := testAccAzureRMFunctionApp_basic(ri, rs, location)
 	disabledConfig := testAccAzureRMFunctionApp_loggingDisabled(ri, rs, location)
 
-	resource.Test(t, resource.TestCase{
+	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
 		Providers:    testAccProviders,
 		CheckDestroy: testCheckAzureRMFunctionAppDestroy,
@@ -522,8 +598,104 @@ func TestAccAzureRMFunctionApp_updateLogging(t *testing.T) {
 	})
 }
 
+func TestAccAzureRMFunctionApp_authSettings(t *testing.T) {
+	resourceName := "azurerm_function_app.test"
+	ri := tf.AccRandTimeInt()
+	rs := strings.ToLower(acctest.RandString(11))
+	tenantID := os.Getenv("ARM_TENANT_ID")
+	config := testAccAzureRMFunctionApp_authSettings(ri, rs, testLocation(), tenantID)
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMFunctionAppDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMAppServiceExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "auth_settings.0.enabled", "true"),
+					resource.TestCheckResourceAttr(resourceName, "auth_settings.0.issuer", fmt.Sprintf("https://sts.windows.net/%s", tenantID)),
+					resource.TestCheckResourceAttr(resourceName, "auth_settings.0.runtime_version", "1.0"),
+					resource.TestCheckResourceAttr(resourceName, "auth_settings.0.unauthenticated_client_action", "RedirectToLoginPage"),
+					resource.TestCheckResourceAttr(resourceName, "auth_settings.0.token_refresh_extension_hours", "75"),
+					resource.TestCheckResourceAttr(resourceName, "auth_settings.0.token_store_enabled", "true"),
+					resource.TestCheckResourceAttr(resourceName, "auth_settings.0.additional_login_params.test_key", "test_value"),
+					resource.TestCheckResourceAttr(resourceName, "auth_settings.0.allowed_external_redirect_urls.#", "1"),
+					resource.TestCheckResourceAttr(resourceName, "auth_settings.0.allowed_external_redirect_urls.0", "https://terra.form"),
+					resource.TestCheckResourceAttr(resourceName, "auth_settings.0.active_directory.0.client_id", "aadclientid"),
+					resource.TestCheckResourceAttr(resourceName, "auth_settings.0.active_directory.0.client_secret", "aadsecret"),
+					resource.TestCheckResourceAttr(resourceName, "auth_settings.0.active_directory.0.allowed_audiences.#", "1"),
+				),
+			},
+			{
+				ResourceName:      resourceName,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+func TestAccAzureRMFunctionApp_corsSettings(t *testing.T) {
+	resourceName := "azurerm_function_app.test"
+	ri := tf.AccRandTimeInt()
+	rs := strings.ToLower(acctest.RandString(11))
+	config := testAccAzureRMFunctionApp_corsSettings(ri, rs, testLocation())
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMFunctionAppDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMFunctionAppExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "site_config.0.cors.#", "1"),
+					resource.TestCheckResourceAttr(resourceName, "site_config.0.cors.0.support_credentials", "true"),
+					resource.TestCheckResourceAttr(resourceName, "site_config.0.cors.0.allowed_origins.#", "4"),
+				),
+			},
+			{
+				ResourceName:      resourceName,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+func TestAccAzureRMFunctionApp_vnetName(t *testing.T) {
+	resourceName := "azurerm_function_app.test"
+	ri := tf.AccRandTimeInt()
+	rs := strings.ToLower(acctest.RandString(11))
+	vnetName := strings.ToLower(acctest.RandString(11))
+	config := testAccAzureRMFunctionApp_vnetName(ri, rs, testLocation(), vnetName)
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMFunctionAppDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMFunctionAppExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "site_config.0.virtual_network_name", vnetName),
+				),
+			},
+			{
+				ResourceName:      resourceName,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
 func testCheckAzureRMFunctionAppDestroy(s *terraform.State) error {
-	client := testAccProvider.Meta().(*ArmClient).appServicesClient
+	client := testAccProvider.Meta().(*ArmClient).web.AppServicesClient
 
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "azurerm_function_app" {
@@ -548,12 +720,12 @@ func testCheckAzureRMFunctionAppDestroy(s *terraform.State) error {
 	return nil
 }
 
-func testCheckAzureRMFunctionAppExists(name string) resource.TestCheckFunc {
+func testCheckAzureRMFunctionAppExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		functionAppName := rs.Primary.Attributes["name"]
@@ -562,7 +734,7 @@ func testCheckAzureRMFunctionAppExists(name string) resource.TestCheckFunc {
 			return fmt.Errorf("Bad: no resource group found in state for Function App: %s", functionAppName)
 		}
 
-		client := testAccProvider.Meta().(*ArmClient).appServicesClient
+		client := testAccProvider.Meta().(*ArmClient).web.AppServicesClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 		resp, err := client.Get(ctx, resourceGroup, functionAppName)
 		if err != nil {
@@ -577,12 +749,12 @@ func testCheckAzureRMFunctionAppExists(name string) resource.TestCheckFunc {
 	}
 }
 
-func testCheckAzureRMFunctionAppHasContentShare(name string) resource.TestCheckFunc {
+func testCheckAzureRMFunctionAppHasContentShare(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		functionAppName := rs.Primary.Attributes["name"]
@@ -591,7 +763,7 @@ func testCheckAzureRMFunctionAppHasContentShare(name string) resource.TestCheckF
 			return fmt.Errorf("Bad: no resource group found in state for Function App: %s", functionAppName)
 		}
 
-		client := testAccProvider.Meta().(*ArmClient).appServicesClient
+		client := testAccProvider.Meta().(*ArmClient).web.AppServicesClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		appSettingsResp, err := client.ListApplicationSettings(ctx, resourceGroup, functionAppName)
@@ -609,12 +781,12 @@ func testCheckAzureRMFunctionAppHasContentShare(name string) resource.TestCheckF
 	}
 }
 
-func testCheckAzureRMFunctionAppHasNoContentShare(name string) resource.TestCheckFunc {
+func testCheckAzureRMFunctionAppHasNoContentShare(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		functionAppName := rs.Primary.Attributes["name"]
@@ -623,7 +795,7 @@ func testCheckAzureRMFunctionAppHasNoContentShare(name string) resource.TestChec
 			return fmt.Errorf("Bad: no resource group found in state for Function App: %s", functionAppName)
 		}
 
-		client := testAccProvider.Meta().(*ArmClient).appServicesClient
+		client := testAccProvider.Meta().(*ArmClient).web.AppServicesClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		appSettingsResp, err := client.ListApplicationSettings(ctx, resourceGroup, functionAppName)
@@ -644,71 +816,90 @@ func testCheckAzureRMFunctionAppHasNoContentShare(name string) resource.TestChec
 func testAccAzureRMFunctionApp_basic(rInt int, storage string, location string) string {
 	return fmt.Sprintf(`
 resource "azurerm_resource_group" "test" {
-	name     = "acctestRG-%[1]d"
-	location = "%[2]s"
+  name     = "acctestRG-%[1]d"
+  location = "%[2]s"
 }
 
 resource "azurerm_storage_account" "test" {
-	name                     = "acctestsa%[3]s"
-	resource_group_name      = "${azurerm_resource_group.test.name}"
-	location                 = "${azurerm_resource_group.test.location}"
-	account_tier             = "Standard"
-	account_replication_type = "LRS"
+  name                     = "acctestsa%[3]s"
+  resource_group_name      = "${azurerm_resource_group.test.name}"
+  location                 = "${azurerm_resource_group.test.location}"
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
 }
 
 resource "azurerm_app_service_plan" "test" {
-	name                = "acctestASP-%[1]d"
-	location            = "${azurerm_resource_group.test.location}"
-	resource_group_name = "${azurerm_resource_group.test.name}"
-	sku {
-		tier = "Standard"
-		size = "S1"
-	}
+  name                = "acctestASP-%[1]d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+
+  sku {
+    tier = "Standard"
+    size = "S1"
+  }
 }
 
 resource "azurerm_function_app" "test" {
-	name                      = "acctest-%[1]d-func"
-	location                  = "${azurerm_resource_group.test.location}"
-	resource_group_name       = "${azurerm_resource_group.test.name}"
-	app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
-	storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
-}`, rInt, location, storage)
+  name                      = "acctest-%[1]d-func"
+  location                  = "${azurerm_resource_group.test.location}"
+  resource_group_name       = "${azurerm_resource_group.test.name}"
+  app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
+  storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
+}
+`, rInt, location, storage)
+}
+
+func testAccAzureRMFunctionApp_requiresImport(rInt int, storage, location string) string {
+	template := testAccAzureRMFunctionApp_basic(rInt, storage, location)
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_function_app" "import" {
+  name                      = "${azurerm_function_app.test.name}"
+  location                  = "${azurerm_function_app.test.location}"
+  resource_group_name       = "${azurerm_function_app.test.resource_group_name}"
+  app_service_plan_id       = "${azurerm_function_app.test.app_service_plan_id}"
+  storage_connection_string = "${azurerm_function_app.test.storage_connection_string}"
+}
+`, template)
 }
 
 func testAccAzureRMFunctionApp_tags(rInt int, storage string, location string) string {
 	return fmt.Sprintf(`
 resource "azurerm_resource_group" "test" {
-	name     = "acctestRG-%[1]d"
-	location = "%[2]s"
+  name     = "acctestRG-%[1]d"
+  location = "%[2]s"
 }
 
 resource "azurerm_storage_account" "test" {
-	name                     = "acctestsa%[3]s"
-	resource_group_name      = "${azurerm_resource_group.test.name}"
-	location                 = "${azurerm_resource_group.test.location}"
-	account_tier             = "Standard"
-	account_replication_type = "LRS"
+  name                     = "acctestsa%[3]s"
+  resource_group_name      = "${azurerm_resource_group.test.name}"
+  location                 = "${azurerm_resource_group.test.location}"
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
 }
 
 resource "azurerm_app_service_plan" "test" {
-	name                = "acctestASP-%[1]d"
-	location            = "${azurerm_resource_group.test.location}"
-	resource_group_name = "${azurerm_resource_group.test.name}"
-	sku {
-		tier = "Standard"
-		size = "S1"
-	}
+  name                = "acctestASP-%[1]d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+
+  sku {
+    tier = "Standard"
+    size = "S1"
+  }
 }
 
 resource "azurerm_function_app" "test" {
-	name                      = "acctest-%[1]d-func"
-	location                  = "${azurerm_resource_group.test.location}"
-	resource_group_name       = "${azurerm_resource_group.test.name}"
-	app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
-	storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
-	tags {
-		environment = "production"
-	}
+  name                      = "acctest-%[1]d-func"
+  location                  = "${azurerm_resource_group.test.location}"
+  resource_group_name       = "${azurerm_resource_group.test.name}"
+  app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
+  storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
+
+  tags = {
+    environment = "production"
+  }
 }
 `, rInt, location, storage)
 }
@@ -746,7 +937,7 @@ resource "azurerm_function_app" "test" {
   app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
   storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
 
-  tags {
+  tags = {
     environment = "production"
     hello       = "Berlin"
   }
@@ -757,72 +948,76 @@ resource "azurerm_function_app" "test" {
 func testAccAzureRMFunctionApp_version(rInt int, storage string, location string, version string) string {
 	return fmt.Sprintf(`
 resource "azurerm_resource_group" "test" {
-	name     = "acctestRG-%[1]d"
-	location = "%[2]s"
+  name     = "acctestRG-%[1]d"
+  location = "%[2]s"
 }
 
 resource "azurerm_storage_account" "test" {
-	name                     = "acctestsa%[3]s"
-	resource_group_name      = "${azurerm_resource_group.test.name}"
-	location                 = "${azurerm_resource_group.test.location}"
-	account_tier             = "Standard"
-	account_replication_type = "LRS"
+  name                     = "acctestsa%[3]s"
+  resource_group_name      = "${azurerm_resource_group.test.name}"
+  location                 = "${azurerm_resource_group.test.location}"
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
 }
 
 resource "azurerm_app_service_plan" "test" {
-	name                = "acctestASP-%[1]d"
-	location            = "${azurerm_resource_group.test.location}"
-	resource_group_name = "${azurerm_resource_group.test.name}"
-	sku {
-		tier = "Standard"
-		size = "S1"
-	}
+  name                = "acctestASP-%[1]d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+
+  sku {
+    tier = "Standard"
+    size = "S1"
+  }
 }
 
 resource "azurerm_function_app" "test" {
-	name                      = "acctest-%[1]d-func"
-	location                  = "${azurerm_resource_group.test.location}"
-	resource_group_name       = "${azurerm_resource_group.test.name}"
-	app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
-	version                   = "%[4]s"
-	storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
-}`, rInt, location, storage, version)
+  name                      = "acctest-%[1]d-func"
+  location                  = "${azurerm_resource_group.test.location}"
+  resource_group_name       = "${azurerm_resource_group.test.name}"
+  app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
+  version                   = "%[4]s"
+  storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
+}
+`, rInt, location, storage, version)
 }
 
 func testAccAzureRMFunctionApp_appSettings(rInt int, rString, location string) string {
 	return fmt.Sprintf(`
 resource "azurerm_resource_group" "test" {
-	name     = "acctestRG-%[1]d"
-	location = "%[2]s"
+  name     = "acctestRG-%[1]d"
+  location = "%[2]s"
 }
 
 resource "azurerm_storage_account" "test" {
-	name                     = "acctestsa%[3]s"
-	resource_group_name      = "${azurerm_resource_group.test.name}"
-	location                 = "${azurerm_resource_group.test.location}"
-	account_tier             = "Standard"
-	account_replication_type = "LRS"
+  name                     = "acctestsa%[3]s"
+  resource_group_name      = "${azurerm_resource_group.test.name}"
+  location                 = "${azurerm_resource_group.test.location}"
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
 }
 
 resource "azurerm_app_service_plan" "test" {
-	name                = "acctestASP-%[1]d"
-	location            = "${azurerm_resource_group.test.location}"
-	resource_group_name = "${azurerm_resource_group.test.name}"
-	sku {
-		tier = "Standard"
-		size = "S1"
-	}
+  name                = "acctestASP-%[1]d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+
+  sku {
+    tier = "Standard"
+    size = "S1"
+  }
 }
 
 resource "azurerm_function_app" "test" {
-	name                      = "acctest-%[1]d-func"
-	location                  = "${azurerm_resource_group.test.location}"
-	resource_group_name       = "${azurerm_resource_group.test.name}"
-	app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
-	storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
-	app_settings {
-		"hello" = "world"
-	}
+  name                      = "acctest-%[1]d-func"
+  location                  = "${azurerm_resource_group.test.location}"
+  resource_group_name       = "${azurerm_resource_group.test.name}"
+  app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
+  storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
+
+  app_settings = {
+    "hello" = "world"
+  }
 }
 `, rInt, location, rString)
 }
@@ -862,6 +1057,50 @@ resource "azurerm_function_app" "test" {
 
   site_config {
     always_on = true
+  }
+}
+`, rInt, location, rString)
+}
+
+func testAccAzureRMFunctionApp_linuxFxVersion(rInt int, rString, location string) string {
+	return fmt.Sprintf(`
+resource "azurerm_resource_group" "test" {
+  name     = "acctestRG-%[1]d"
+  location = "%[2]s"
+}
+
+resource "azurerm_storage_account" "test" {
+  name                     = "acctestsa%[3]s"
+  resource_group_name      = "${azurerm_resource_group.test.name}"
+  location                 = "${azurerm_resource_group.test.location}"
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_app_service_plan" "test" {
+  name                = "acctestASP-%[1]d"
+  location            = "${azurerm_resource_group.test.location}"
+  kind                = "Linux"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+
+  sku {
+    tier = "Standard"
+    size = "S1"
+  }
+
+  reserved = true
+}
+
+resource "azurerm_function_app" "test" {
+  name                      = "acctest-%[1]d-func"
+  location                  = "${azurerm_resource_group.test.location}"
+  version                   = "~2"
+  resource_group_name       = "${azurerm_resource_group.test.name}"
+  app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
+  storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
+
+  site_config {
+    linux_fx_version = "DOCKER|(golang:latest)"
   }
 }
 `, rInt, location, rString)
@@ -942,7 +1181,7 @@ resource "azurerm_function_app" "test" {
   app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
   storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
 
-  app_settings {
+  app_settings = {
     "hello" = "world"
   }
 
@@ -953,7 +1192,7 @@ resource "azurerm_function_app" "test" {
 `, rInt, location, rString)
 }
 
-func testAccAzureRMFunctionApp_appSettingsAlwaysOnConnectionStrings(rInt int, rString, location string) string {
+func testAccAzureRMFunctionApp_appSettingsAlwaysOnLinuxFxVersion(rInt int, rString, location string) string {
 	return fmt.Sprintf(`
 resource "azurerm_resource_group" "test" {
   name     = "acctestRG-%[1]d"
@@ -971,27 +1210,81 @@ resource "azurerm_storage_account" "test" {
 resource "azurerm_app_service_plan" "test" {
   name                = "acctestASP-%[1]d"
   location            = "${azurerm_resource_group.test.location}"
+  kind                = "Linux"
   resource_group_name = "${azurerm_resource_group.test.name}"
 
   sku {
     tier = "Standard"
     size = "S1"
   }
+
+  reserved = true
 }
 
 resource "azurerm_function_app" "test" {
   name                      = "acctest-%[1]d-func"
   location                  = "${azurerm_resource_group.test.location}"
+  version                   = "~2"
   resource_group_name       = "${azurerm_resource_group.test.name}"
   app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
   storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
 
-  app_settings {
+  app_settings = {
     "hello" = "world"
   }
 
   site_config {
-    always_on = true
+    always_on        = true
+    linux_fx_version = "DOCKER|(golang:latest)"
+  }
+}
+`, rInt, location, rString)
+}
+
+func testAccAzureRMFunctionApp_appSettingsAlwaysOnLinuxFxVersionConnectionStrings(rInt int, rString, location string) string {
+	return fmt.Sprintf(`
+resource "azurerm_resource_group" "test" {
+  name     = "acctestRG-%[1]d"
+  location = "%[2]s"
+}
+
+resource "azurerm_storage_account" "test" {
+  name                     = "acctestsa%[3]s"
+  resource_group_name      = "${azurerm_resource_group.test.name}"
+  location                 = "${azurerm_resource_group.test.location}"
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_app_service_plan" "test" {
+  name                = "acctestASP-%[1]d"
+  location            = "${azurerm_resource_group.test.location}"
+  kind                = "Linux"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+
+  sku {
+    tier = "Standard"
+    size = "S1"
+  }
+
+  reserved = true
+}
+
+resource "azurerm_function_app" "test" {
+  name                      = "acctest-%[1]d-func"
+  location                  = "${azurerm_resource_group.test.location}"
+  version                   = "~2"
+  resource_group_name       = "${azurerm_resource_group.test.name}"
+  app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
+  storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
+
+  app_settings = {
+    "hello" = "world"
+  }
+
+  site_config {
+    always_on        = true
+    linux_fx_version = "DOCKER|(golang:latest)"
   }
 
   connection_string {
@@ -1213,6 +1506,7 @@ resource "azurerm_app_service_plan" "test" {
   name                = "acctestASP-%[1]d"
   location            = "${azurerm_resource_group.test.location}"
   resource_group_name = "${azurerm_resource_group.test.name}"
+
   sku {
     tier = "Standard"
     size = "S1"
@@ -1226,5 +1520,157 @@ resource "azurerm_function_app" "test" {
   app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
   storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
   enable_builtin_logging    = false
-}`, rInt, location, storage)
+}
+`, rInt, location, storage)
+}
+
+func testAccAzureRMFunctionApp_authSettings(rInt int, storage string, location string, tenantID string) string {
+	return fmt.Sprintf(`
+resource "azurerm_resource_group" "test" {
+  name     = "acctestRG-%[1]d"
+  location = "%[2]s"
+}
+
+resource "azurerm_storage_account" "test" {
+  name                     = "acctestsa%[3]s"
+  resource_group_name      = "${azurerm_resource_group.test.name}"
+  location                 = "${azurerm_resource_group.test.location}"
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_app_service_plan" "test" {
+  name                = "acctestASP-%[1]d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+
+  sku {
+    tier = "Standard"
+    size = "S1"
+  }
+}
+
+resource "azurerm_function_app" "test" {
+  name                      = "acctest-%[1]d-func"
+  location                  = "${azurerm_resource_group.test.location}"
+  resource_group_name       = "${azurerm_resource_group.test.name}"
+  app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
+  storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
+
+  auth_settings {
+    enabled                       = true
+    issuer                        = "https://sts.windows.net/%[4]s"
+    runtime_version               = "1.0"
+    unauthenticated_client_action = "RedirectToLoginPage"
+    token_refresh_extension_hours = 75
+    token_store_enabled           = true
+
+    additional_login_params = {
+      test_key = "test_value"
+    }
+
+    allowed_external_redirect_urls = [
+      "https://terra.form",
+    ]
+
+    active_directory {
+      client_id     = "aadclientid"
+      client_secret = "aadsecret"
+
+      allowed_audiences = [
+        "activedirectorytokenaudiences",
+      ]
+    }
+  }
+}
+`, rInt, location, storage, tenantID)
+}
+
+func testAccAzureRMFunctionApp_corsSettings(rInt int, storage string, location string) string {
+	return fmt.Sprintf(`
+resource "azurerm_resource_group" "test" {
+  name     = "acctestRG-%[1]d"
+  location = "%[2]s"
+}
+
+resource "azurerm_storage_account" "test" {
+  name                     = "acctestsa%[3]s"
+  resource_group_name      = "${azurerm_resource_group.test.name}"
+  location                 = "${azurerm_resource_group.test.location}"
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_app_service_plan" "test" {
+  name                = "acctestASP-%[1]d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+
+  sku {
+    tier = "Standard"
+    size = "S1"
+  }
+}
+
+resource "azurerm_function_app" "test" {
+  name                      = "acctest-%[1]d-func"
+  location                  = "${azurerm_resource_group.test.location}"
+  resource_group_name       = "${azurerm_resource_group.test.name}"
+  app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
+  storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
+
+  site_config {
+    cors {
+      allowed_origins = [
+        "http://www.contoso.com",
+        "www.contoso.com",
+        "contoso.com",
+        "http://localhost:4201",
+      ]
+
+      support_credentials = true
+    }
+  }
+}
+`, rInt, location, storage)
+}
+
+func testAccAzureRMFunctionApp_vnetName(rInt int, storage, location, vnetName string) string {
+	return fmt.Sprintf(`
+resource "azurerm_resource_group" "test" {
+  name     = "acctestRG-%[1]d"
+  location = "%[2]s"
+}
+
+resource "azurerm_storage_account" "test" {
+  name                     = "acctestsa%[3]s"
+  resource_group_name      = "${azurerm_resource_group.test.name}"
+  location                 = "${azurerm_resource_group.test.location}"
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_app_service_plan" "test" {
+  name                = "acctestASP-%[1]d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+
+  sku {
+    tier = "Standard"
+    size = "S1"
+  }
+}
+
+resource "azurerm_function_app" "test" {
+  name                      = "acctest-%[1]d-func"
+  location                  = "${azurerm_resource_group.test.location}"
+  resource_group_name       = "${azurerm_resource_group.test.name}"
+  app_service_plan_id       = "${azurerm_app_service_plan.test.id}"
+  storage_connection_string = "${azurerm_storage_account.test.primary_connection_string}"
+
+  site_config {
+    virtual_network_name = "%[4]s"
+  }
+}
+`, rInt, location, storage, vnetName)
 }

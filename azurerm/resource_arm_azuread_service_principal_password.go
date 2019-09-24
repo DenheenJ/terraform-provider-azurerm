@@ -12,11 +12,18 @@ import (
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/validate"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/locks"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 func resourceArmActiveDirectoryServicePrincipalPassword() *schema.Resource {
 	return &schema.Resource{
+		DeprecationMessage: `The Azure Active Directory resources have been split out into their own Provider.
+
+Information on migrating to the new AzureAD Provider can be found here: https://terraform.io/docs/providers/azurerm/guides/migrating-to-azuread.html
+
+As such the Azure Active Directory resources within the AzureRM Provider are now deprecated and will be removed in v2.0 of the AzureRM Provider.
+`,
 		Create: resourceArmActiveDirectoryServicePrincipalPasswordCreate,
 		Read:   resourceArmActiveDirectoryServicePrincipalPasswordRead,
 		Delete: resourceArmActiveDirectoryServicePrincipalPasswordDelete,
@@ -66,7 +73,7 @@ func resourceArmActiveDirectoryServicePrincipalPassword() *schema.Resource {
 }
 
 func resourceArmActiveDirectoryServicePrincipalPasswordCreate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).servicePrincipalsClient
+	client := meta.(*ArmClient).graph.ServicePrincipalsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	objectId := d.Get("service_principal_id").(string)
@@ -98,8 +105,8 @@ func resourceArmActiveDirectoryServicePrincipalPasswordCreate(d *schema.Resource
 		credential.StartDate = &date.Time{Time: startDate}
 	}
 
-	azureRMLockByName(objectId, servicePrincipalResourceName)
-	defer azureRMUnlockByName(objectId, servicePrincipalResourceName)
+	locks.ByName(objectId, servicePrincipalResourceName)
+	defer locks.UnlockByName(objectId, servicePrincipalResourceName)
 
 	existingCredentials, err := client.ListPasswordCredentials(ctx, objectId)
 	if err != nil {
@@ -137,7 +144,7 @@ func resourceArmActiveDirectoryServicePrincipalPasswordCreate(d *schema.Resource
 }
 
 func resourceArmActiveDirectoryServicePrincipalPasswordRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).servicePrincipalsClient
+	client := meta.(*ArmClient).graph.ServicePrincipalsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	id := strings.Split(d.Id(), "/")
@@ -199,7 +206,7 @@ func resourceArmActiveDirectoryServicePrincipalPasswordRead(d *schema.ResourceDa
 }
 
 func resourceArmActiveDirectoryServicePrincipalPasswordDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).servicePrincipalsClient
+	client := meta.(*ArmClient).graph.ServicePrincipalsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	id := strings.Split(d.Id(), "/")
@@ -210,8 +217,8 @@ func resourceArmActiveDirectoryServicePrincipalPasswordDelete(d *schema.Resource
 	objectId := id[0]
 	keyId := id[1]
 
-	azureRMLockByName(objectId, servicePrincipalResourceName)
-	defer azureRMUnlockByName(objectId, servicePrincipalResourceName)
+	locks.ByName(objectId, servicePrincipalResourceName)
+	defer locks.UnlockByName(objectId, servicePrincipalResourceName)
 
 	// ensure the parent Service Principal exists
 	servicePrincipal, err := client.Get(ctx, objectId)

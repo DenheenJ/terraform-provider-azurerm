@@ -1,7 +1,7 @@
 ---
 layout: "azurerm"
 page_title: "Azure Resource Manager: azurerm_monitor_metric_alert"
-sidebar_current: "docs-azurerm-resource-monitor-metric-alert"
+sidebar_current: "docs-azurerm-resource-monitor-metric-alert-x"
 description: |-
   Manages a Metric Alert within Azure Monitor
 ---
@@ -51,9 +51,9 @@ resource "azurerm_monitor_metric_alert" "test" {
     threshold        = 50
 
     dimension {
-      "name"     = "ApiName"
-      "operator" = "Include"
-      "values"   = ["*"]
+      name     = "ApiName"
+      operator = "Include"
+      values   = ["*"]
     }
   }
 
@@ -69,7 +69,7 @@ The following arguments are supported:
 
 * `name` - (Required) The name of the Metric Alert. Changing this forces a new resource to be created.
 * `resource_group_name` - (Required) The name of the resource group in which to create the Metric Alert instance.
-* `scopes` - (Required) The resource ID at which the metric criteria should be applied.
+* `scopes` - (Required) A set of strings of resource IDs at which the metric criteria should be applied.
 * `criteria` - (Required) One or more `criteria` blocks as defined below.
 * `action` - (Optional) One or more `action` blocks as defined below.
 * `enabled` - (Optional) Should this Metric Alert be enabled? Defaults to `true`.
@@ -93,7 +93,7 @@ A `criteria` block supports the following:
 
 * `metric_namespace` - (Required) One of the metric namespaces to be monitored.
 * `metric_name` - (Required) One of the metric names to be monitored.
-* `aggregation` - (Required) The statistic that runs over the metric values. Possible values are `Average`, `Minimum`, `Maximum` and `Total`.
+* `aggregation` - (Required) The statistic that runs over the metric values. Possible values are `Average`, `Count`, `Minimum`, `Maximum` and `Total`.
 * `operator` - (Required) The criteria operator. Possible values are `Equals`, `NotEquals`, `GreaterThan`, `GreaterThanOrEqual`, `LessThan` and `LessThanOrEqual`.
 * `threshold` - (Required) The criteria threshold value that activates the alert.
 * `dimension` - (Optional) One or more `dimension` blocks as defined below.

@@ -9,6 +9,11 @@ import (
 	"github.com/hashicorp/terraform/helper/hashcode"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/helper/validation"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/suppress"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/tags"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
@@ -29,7 +34,7 @@ func resourceArmDnsCaaRecord() *schema.Resource {
 				ForceNew: true,
 			},
 
-			"resource_group_name": resourceGroupNameSchema(),
+			"resource_group_name": azure.SchemaResourceGroupName(),
 
 			"zone_name": {
 				Type:     schema.TypeString,
@@ -54,7 +59,7 @@ func resourceArmDnsCaaRecord() *schema.Resource {
 								"issuewild",
 								"iodef",
 							}, true),
-							DiffSuppressFunc: ignoreCaseDiffSuppressFunc,
+							DiffSuppressFunc: suppress.CaseDifference,
 						},
 
 						"value": {
@@ -71,40 +76,53 @@ func resourceArmDnsCaaRecord() *schema.Resource {
 				Required: true,
 			},
 
-			"tags": tagsSchema(),
+			"tags": tags.Schema(),
 		},
 	}
 }
 
 func resourceArmDnsCaaRecordCreateUpdate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).dnsClient
+	client := meta.(*ArmClient).dns.RecordSetsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	name := d.Get("name").(string)
 	resGroup := d.Get("resource_group_name").(string)
 	zoneName := d.Get("zone_name").(string)
-	ttl := int64(d.Get("ttl").(int))
-	tags := d.Get("tags").(map[string]interface{})
 
-	records, err := expandAzureRmDnsCaaRecords(d)
-	if err != nil {
-		return err
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
+		existing, err := client.Get(ctx, resGroup, zoneName, name, dns.CAA)
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing DNS CAA Record %q (Zone %q / Resource Group %q): %s", name, zoneName, resGroup, err)
+			}
+		}
+
+		if existing.ID != nil && *existing.ID != "" {
+			return tf.ImportAsExistsError("azurerm_dns_caa_record", *existing.ID)
+		}
 	}
+
+	ttl := int64(d.Get("ttl").(int))
+	t := d.Get("tags").(map[string]interface{})
 
 	parameters := dns.RecordSet{
 		Name: &name,
 		RecordSetProperties: &dns.RecordSetProperties{
-			Metadata:   expandTags(tags),
+			Metadata:   tags.Expand(t),
 			TTL:        &ttl,
-			CaaRecords: &records,
+			CaaRecords: expandAzureRmDnsCaaRecords(d),
 		},
 	}
 
 	eTag := ""
 	ifNoneMatch := "" // set to empty to allow updates to records after creation
-	resp, err := client.CreateOrUpdate(ctx, resGroup, zoneName, name, dns.CAA, parameters, eTag, ifNoneMatch)
+	if _, err := client.CreateOrUpdate(ctx, resGroup, zoneName, name, dns.CAA, parameters, eTag, ifNoneMatch); err != nil {
+		return fmt.Errorf("Error creating/updating DNS CAA Record %q (Zone %q / Resource Group %q): %s", name, zoneName, resGroup, err)
+	}
+
+	resp, err := client.Get(ctx, resGroup, zoneName, name, dns.CAA)
 	if err != nil {
-		return err
+		return fmt.Errorf("Error retrieving DNS CAA Record %q (Zone %q / Resource Group %q): %s", name, zoneName, resGroup, err)
 	}
 
 	if resp.ID == nil {
@@ -117,10 +135,10 @@ func resourceArmDnsCaaRecordCreateUpdate(d *schema.ResourceData, meta interface{
 }
 
 func resourceArmDnsCaaRecordRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).dnsClient
+	client := meta.(*ArmClient).dns.RecordSetsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -146,16 +164,14 @@ func resourceArmDnsCaaRecordRead(d *schema.ResourceData, meta interface{}) error
 	if err := d.Set("record", flattenAzureRmDnsCaaRecords(resp.CaaRecords)); err != nil {
 		return err
 	}
-	flattenAndSetTags(d, resp.Metadata)
-
-	return nil
+	return tags.FlattenAndSet(d, resp.Metadata)
 }
 
 func resourceArmDnsCaaRecordDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).dnsClient
+	client := meta.(*ArmClient).dns.RecordSetsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -188,7 +204,7 @@ func flattenAzureRmDnsCaaRecords(records *[]dns.CaaRecord) []map[string]interfac
 	return results
 }
 
-func expandAzureRmDnsCaaRecords(d *schema.ResourceData) ([]dns.CaaRecord, error) {
+func expandAzureRmDnsCaaRecords(d *schema.ResourceData) *[]dns.CaaRecord {
 	recordStrings := d.Get("record").(*schema.Set).List()
 	records := make([]dns.CaaRecord, len(recordStrings))
 
@@ -207,7 +223,7 @@ func expandAzureRmDnsCaaRecords(d *schema.ResourceData) ([]dns.CaaRecord, error)
 		records[i] = caaRecord
 	}
 
-	return records, nil
+	return &records
 }
 
 func resourceArmDnsCaaRecordHash(v interface{}) int {

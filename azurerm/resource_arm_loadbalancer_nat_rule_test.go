@@ -5,15 +5,17 @@ import (
 	"os"
 	"testing"
 
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-08-01/network"
-	"github.com/hashicorp/terraform/helper/acctest"
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2019-06-01/network"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 )
 
 func TestAccAzureRMLoadBalancerNatRule_basic(t *testing.T) {
 	var lb network.LoadBalancer
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	natRuleName := fmt.Sprintf("NatRule-%d", ri)
 
 	subscriptionID := os.Getenv("ARM_SUBSCRIPTION_ID")
@@ -46,9 +48,47 @@ func TestAccAzureRMLoadBalancerNatRule_basic(t *testing.T) {
 	})
 }
 
+func TestAccAzureRMLoadBalancerNatRule_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
+
+	var lb network.LoadBalancer
+	ri := tf.AccRandTimeInt()
+	natRuleName := fmt.Sprintf("NatRule-%d", ri)
+	location := testLocation()
+
+	subscriptionID := os.Getenv("ARM_SUBSCRIPTION_ID")
+	natRuleId := fmt.Sprintf(
+		"/subscriptions/%s/resourceGroups/acctestRG-%d/providers/Microsoft.Network/loadBalancers/arm-test-loadbalancer-%d/inboundNatRules/%s",
+		subscriptionID, ri, ri, natRuleName)
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMLoadBalancerDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMLoadBalancerNatRule_basic(ri, natRuleName, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMLoadBalancerExists("azurerm_lb.test", &lb),
+					testCheckAzureRMLoadBalancerNatRuleExists(natRuleName, &lb),
+					resource.TestCheckResourceAttr(
+						"azurerm_lb_nat_rule.test", "id", natRuleId),
+				),
+			},
+			{
+				Config:      testAccAzureRMLoadBalancerNatRule_requiresImport(ri, natRuleName, location),
+				ExpectError: testRequiresImportError("azurerm_lb_nat_rule"),
+			},
+		},
+	})
+}
+
 func TestAccAzureRMLoadBalancerNatRule_removal(t *testing.T) {
 	var lb network.LoadBalancer
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	natRuleName := fmt.Sprintf("NatRule-%d", ri)
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -76,9 +116,9 @@ func TestAccAzureRMLoadBalancerNatRule_removal(t *testing.T) {
 
 func TestAccAzureRMLoadBalancerNatRule_update(t *testing.T) {
 	var lb network.LoadBalancer
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	natRuleName := fmt.Sprintf("NatRule-%d", ri)
-	natRule2Name := fmt.Sprintf("NatRule-%d", acctest.RandInt())
+	natRule2Name := fmt.Sprintf("NatRule-%d", tf.AccRandTimeInt())
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -109,43 +149,9 @@ func TestAccAzureRMLoadBalancerNatRule_update(t *testing.T) {
 	})
 }
 
-func TestAccAzureRMLoadBalancerNatRule_reapply(t *testing.T) {
-	var lb network.LoadBalancer
-	ri := acctest.RandInt()
-	natRuleName := fmt.Sprintf("NatRule-%d", ri)
-
-	deleteNatRuleState := func(s *terraform.State) error {
-		return s.Remove("azurerm_lb_nat_rule.test")
-	}
-
-	resource.ParallelTest(t, resource.TestCase{
-		PreCheck:     func() { testAccPreCheck(t) },
-		Providers:    testAccProviders,
-		CheckDestroy: testCheckAzureRMLoadBalancerDestroy,
-		Steps: []resource.TestStep{
-			{
-				Config: testAccAzureRMLoadBalancerNatRule_basic(ri, natRuleName, testLocation()),
-				Check: resource.ComposeTestCheckFunc(
-					testCheckAzureRMLoadBalancerExists("azurerm_lb.test", &lb),
-					testCheckAzureRMLoadBalancerNatRuleExists(natRuleName, &lb),
-					deleteNatRuleState,
-				),
-				ExpectNonEmptyPlan: true,
-			},
-			{
-				Config: testAccAzureRMLoadBalancerNatRule_basic(ri, natRuleName, testLocation()),
-				Check: resource.ComposeTestCheckFunc(
-					testCheckAzureRMLoadBalancerExists("azurerm_lb.test", &lb),
-					testCheckAzureRMLoadBalancerNatRuleExists(natRuleName, &lb),
-				),
-			},
-		},
-	})
-}
-
 func TestAccAzureRMLoadBalancerNatRule_disappears(t *testing.T) {
 	var lb network.LoadBalancer
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	natRuleName := fmt.Sprintf("NatRule-%d", ri)
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -168,7 +174,7 @@ func TestAccAzureRMLoadBalancerNatRule_disappears(t *testing.T) {
 
 func TestAccAzureRMLoadBalancerNatRule_enableFloatingIP(t *testing.T) {
 	var lb network.LoadBalancer
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	natRuleName := fmt.Sprintf("NatRule-%d", ri)
 	location := testLocation()
 
@@ -190,7 +196,7 @@ func TestAccAzureRMLoadBalancerNatRule_enableFloatingIP(t *testing.T) {
 
 func TestAccAzureRMLoadBalancerNatRule_disableFloatingIP(t *testing.T) {
 	var lb network.LoadBalancer
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	natRuleName := fmt.Sprintf("NatRule-%d", ri)
 	location := testLocation()
 
@@ -248,7 +254,7 @@ func testCheckAzureRMLoadBalancerNatRuleNotExists(natRuleName string, lb *networ
 
 func testCheckAzureRMLoadBalancerNatRuleDisappears(natRuleName string, lb *network.LoadBalancer) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
-		client := testAccProvider.Meta().(*ArmClient).loadBalancerClient
+		client := testAccProvider.Meta().(*ArmClient).network.LoadBalancersClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		_, i, exists := findLoadBalancerNatRuleByName(lb, natRuleName)
@@ -260,7 +266,7 @@ func testCheckAzureRMLoadBalancerNatRuleDisappears(natRuleName string, lb *netwo
 		rules := append(currentRules[:i], currentRules[i+1:]...)
 		lb.LoadBalancerPropertiesFormat.InboundNatRules = &rules
 
-		id, err := parseAzureResourceID(*lb.ID)
+		id, err := azure.ParseAzureResourceID(*lb.ID)
 		if err != nil {
 			return err
 		}
@@ -287,10 +293,10 @@ resource "azurerm_resource_group" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "test-ip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "static"
+  name                = "test-ip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
 }
 
 resource "azurerm_lb" "test" {
@@ -317,6 +323,24 @@ resource "azurerm_lb_nat_rule" "test" {
 `, rInt, location, rInt, rInt, rInt, natRuleName, rInt)
 }
 
+func testAccAzureRMLoadBalancerNatRule_requiresImport(rInt int, name string, location string) string {
+	template := testAccAzureRMLoadBalancerNatRule_basic(rInt, name, location)
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_lb_nat_rule" "import" {
+  name                           = "${azurerm_lb_nat_rule.test.name}"
+  loadbalancer_id                = "${azurerm_lb_nat_rule.test.loadbalancer_id}"
+  location                       = "${azurerm_lb_nat_rule.test.location}"
+  resource_group_name            = "${azurerm_lb_nat_rule.test.resource_group_name}"
+  frontend_ip_configuration_name = "${azurerm_lb_nat_rule.test.frontend_ip_configuration_name}"
+  protocol                       = "Tcp"
+  frontend_port                  = 3389
+  backend_port                   = 3389
+}
+`, template)
+}
+
 func testAccAzureRMLoadBalancerNatRule_removal(rInt int, location string) string {
 	return fmt.Sprintf(`
 resource "azurerm_resource_group" "test" {
@@ -325,10 +349,10 @@ resource "azurerm_resource_group" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "test-ip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "static"
+  name                = "test-ip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
 }
 
 resource "azurerm_lb" "test" {
@@ -352,10 +376,10 @@ resource "azurerm_resource_group" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "test-ip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "static"
+  name                = "test-ip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
 }
 
 resource "azurerm_lb" "test" {
@@ -401,10 +425,10 @@ resource "azurerm_resource_group" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "test-ip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "static"
+  name                = "test-ip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
 }
 
 resource "azurerm_lb" "test" {
@@ -450,10 +474,10 @@ resource "azurerm_resource_group" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "test-ip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "static"
+  name                = "test-ip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
 }
 
 resource "azurerm_lb" "test" {

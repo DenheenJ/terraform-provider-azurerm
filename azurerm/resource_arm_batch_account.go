@@ -5,11 +5,16 @@ import (
 	"log"
 	"regexp"
 
-	"github.com/Azure/azure-sdk-for-go/services/batch/mgmt/2017-09-01/batch"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/validate"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/tags"
+
+	"github.com/Azure/azure-sdk-for-go/services/batch/mgmt/2018-12-01/batch"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/helper/validation"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/response"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
@@ -30,8 +35,12 @@ func resourceArmBatchAccount() *schema.Resource {
 				ForceNew:     true,
 				ValidateFunc: validateAzureRMBatchAccountName,
 			},
-			"resource_group_name": resourceGroupNameSchema(),
-			"location":            locationSchema(),
+
+			// TODO: make this case sensitive once this API bug has been fixed:
+			// https://github.com/Azure/azure-rest-api-specs/issues/5574
+			"resource_group_name": azure.SchemaResourceGroupNameDiffSuppress(),
+
+			"location": azure.SchemaLocation(),
 			"storage_account_id": {
 				Type:         schema.TypeString,
 				Optional:     true,
@@ -47,30 +56,91 @@ func resourceArmBatchAccount() *schema.Resource {
 					string(batch.UserSubscription),
 				}, false),
 			},
-			"tags": tagsSchema(),
+			"key_vault_reference": {
+				Type:     schema.TypeList,
+				Optional: true,
+				MaxItems: 1,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"id": {
+							Type:         schema.TypeString,
+							Required:     true,
+							ValidateFunc: azure.ValidateResourceID,
+						},
+						"url": {
+							Type:         schema.TypeString,
+							Required:     true,
+							ValidateFunc: validate.URLIsHTTPS,
+						},
+					},
+				},
+			},
+			"primary_access_key": {
+				Type:      schema.TypeString,
+				Sensitive: true,
+				Computed:  true,
+			},
+			"secondary_access_key": {
+				Type:      schema.TypeString,
+				Sensitive: true,
+				Computed:  true,
+			},
+			"account_endpoint": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+			"tags": tags.Schema(),
 		},
 	}
 }
 
 func resourceArmBatchAccountCreate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).batchAccountClient
+	client := meta.(*ArmClient).batch.AccountClient
 	ctx := meta.(*ArmClient).StopContext
 
 	log.Printf("[INFO] preparing arguments for Azure Batch account creation.")
 
-	resourceGroupName := d.Get("resource_group_name").(string)
+	resourceGroup := d.Get("resource_group_name").(string)
 	name := d.Get("name").(string)
-	location := azureRMNormalizeLocation(d.Get("location").(string))
+	location := azure.NormalizeLocation(d.Get("location").(string))
 	storageAccountId := d.Get("storage_account_id").(string)
 	poolAllocationMode := d.Get("pool_allocation_mode").(string)
-	tags := d.Get("tags").(map[string]interface{})
+	t := d.Get("tags").(map[string]interface{})
+
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
+		existing, err := client.Get(ctx, resourceGroup, name)
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing Batch Account %q (Resource Group %q): %s", name, resourceGroup, err)
+			}
+		}
+
+		if existing.ID != nil && *existing.ID != "" {
+			return tf.ImportAsExistsError("azurerm_batch_account", *existing.ID)
+		}
+	}
 
 	parameters := batch.AccountCreateParameters{
 		Location: &location,
 		AccountCreateProperties: &batch.AccountCreateProperties{
 			PoolAllocationMode: batch.PoolAllocationMode(poolAllocationMode),
 		},
-		Tags: expandTags(tags),
+		Tags: tags.Expand(t),
+	}
+
+	// if pool allocation mode is UserSubscription, a key vault reference needs to be set
+	if poolAllocationMode == string(batch.UserSubscription) {
+		keyVaultReferenceSet := d.Get("key_vault_reference").([]interface{})
+		keyVaultReference, err := azure.ExpandBatchAccountKeyVaultReference(keyVaultReferenceSet)
+		if err != nil {
+			return fmt.Errorf("Error creating Batch account %q (Resource Group %q): %+v", name, resourceGroup, err)
+		}
+
+		if keyVaultReference == nil {
+			return fmt.Errorf("Error creating Batch account %q (Resource Group %q): When setting pool allocation mode to UserSubscription, a Key Vault reference needs to be set", name, resourceGroup)
+		}
+
+		parameters.KeyVaultReference = keyVaultReference
 	}
 
 	if storageAccountId != "" {
@@ -79,22 +149,22 @@ func resourceArmBatchAccountCreate(d *schema.ResourceData, meta interface{}) err
 		}
 	}
 
-	future, err := client.Create(ctx, resourceGroupName, name, parameters)
+	future, err := client.Create(ctx, resourceGroup, name, parameters)
 	if err != nil {
-		return fmt.Errorf("Error creating Batch account %q (Resource Group %q): %+v", name, resourceGroupName, err)
+		return fmt.Errorf("Error creating Batch account %q (Resource Group %q): %+v", name, resourceGroup, err)
 	}
 
 	if err = future.WaitForCompletionRef(ctx, client.Client); err != nil {
-		return fmt.Errorf("Error waiting for creation of Batch account %q (Resource Group %q): %+v", name, resourceGroupName, err)
+		return fmt.Errorf("Error waiting for creation of Batch account %q (Resource Group %q): %+v", name, resourceGroup, err)
 	}
 
-	read, err := client.Get(ctx, resourceGroupName, name)
+	read, err := client.Get(ctx, resourceGroup, name)
 	if err != nil {
-		return fmt.Errorf("Error retrieving Batch account %q (Resource Group %q): %+v", name, resourceGroupName, err)
+		return fmt.Errorf("Error retrieving Batch account %q (Resource Group %q): %+v", name, resourceGroup, err)
 	}
 
 	if read.ID == nil {
-		return fmt.Errorf("Cannot read Batch account %q (resource group %q) ID", name, resourceGroupName)
+		return fmt.Errorf("Cannot read Batch account %q (resource group %q) ID", name, resourceGroup)
 	}
 
 	d.SetId(*read.ID)
@@ -103,31 +173,32 @@ func resourceArmBatchAccountCreate(d *schema.ResourceData, meta interface{}) err
 }
 
 func resourceArmBatchAccountRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).batchAccountClient
+	client := meta.(*ArmClient).batch.AccountClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
 	name := id.Path["batchAccounts"]
-	resourceGroupName := id.ResourceGroup
+	resourceGroup := id.ResourceGroup
 
-	resp, err := client.Get(ctx, resourceGroupName, name)
+	resp, err := client.Get(ctx, resourceGroup, name)
 	if err != nil {
 		if utils.ResponseWasNotFound(resp.Response) {
 			d.SetId("")
-			log.Printf("[DEBUG] Batch Account %q was not found in Resource Group %q - removing from state!", name, resourceGroupName)
+			log.Printf("[DEBUG] Batch Account %q was not found in Resource Group %q - removing from state!", name, resourceGroup)
 			return nil
 		}
 		return fmt.Errorf("Error reading the state of Batch account %q: %+v", name, err)
 	}
 
 	d.Set("name", resp.Name)
-	d.Set("resource_group_name", resourceGroupName)
+	d.Set("resource_group_name", resourceGroup)
+	d.Set("account_endpoint", resp.AccountEndpoint)
 
 	if location := resp.Location; location != nil {
-		d.Set("location", azureRMNormalizeLocation(*location))
+		d.Set("location", azure.NormalizeLocation(*location))
 	}
 
 	if props := resp.AccountProperties; props != nil {
@@ -137,26 +208,35 @@ func resourceArmBatchAccountRead(d *schema.ResourceData, meta interface{}) error
 		d.Set("pool_allocation_mode", props.PoolAllocationMode)
 	}
 
-	flattenAndSetTags(d, resp.Tags)
+	if d.Get("pool_allocation_mode").(string) == string(batch.BatchService) {
+		keys, err := client.GetKeys(ctx, resourceGroup, name)
 
-	return nil
+		if err != nil {
+			return fmt.Errorf("Cannot read keys for Batch account %q (resource group %q): %v", name, resourceGroup, err)
+		}
+
+		d.Set("primary_access_key", keys.Primary)
+		d.Set("secondary_access_key", keys.Secondary)
+	}
+
+	return tags.FlattenAndSet(d, resp.Tags)
 }
 
 func resourceArmBatchAccountUpdate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).batchAccountClient
+	client := meta.(*ArmClient).batch.AccountClient
 	ctx := meta.(*ArmClient).StopContext
 
 	log.Printf("[INFO] preparing arguments for Azure Batch account update.")
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
 	name := id.Path["batchAccounts"]
-	resourceGroupName := id.ResourceGroup
+	resourceGroup := id.ResourceGroup
 
 	storageAccountId := d.Get("storage_account_id").(string)
-	tags := d.Get("tags").(map[string]interface{})
+	t := d.Get("tags").(map[string]interface{})
 
 	parameters := batch.AccountUpdateParameters{
 		AccountUpdateProperties: &batch.AccountUpdateProperties{
@@ -164,20 +244,20 @@ func resourceArmBatchAccountUpdate(d *schema.ResourceData, meta interface{}) err
 				StorageAccountID: &storageAccountId,
 			},
 		},
-		Tags: expandTags(tags),
+		Tags: tags.Expand(t),
 	}
 
-	if _, err = client.Update(ctx, resourceGroupName, name, parameters); err != nil {
-		return fmt.Errorf("Error updating Batch account %q (Resource Group %q): %+v", name, resourceGroupName, err)
+	if _, err = client.Update(ctx, resourceGroup, name, parameters); err != nil {
+		return fmt.Errorf("Error updating Batch account %q (Resource Group %q): %+v", name, resourceGroup, err)
 	}
 
-	read, err := client.Get(ctx, resourceGroupName, name)
+	read, err := client.Get(ctx, resourceGroup, name)
 	if err != nil {
-		return fmt.Errorf("Error retrieving Batch account %q (Resource Group %q): %+v", name, resourceGroupName, err)
+		return fmt.Errorf("Error retrieving Batch account %q (Resource Group %q): %+v", name, resourceGroup, err)
 	}
 
 	if read.ID == nil {
-		return fmt.Errorf("Cannot read Batch account %q (resource group %q) ID", name, resourceGroupName)
+		return fmt.Errorf("Cannot read Batch account %q (resource group %q) ID", name, resourceGroup)
 	}
 
 	d.SetId(*read.ID)
@@ -186,24 +266,24 @@ func resourceArmBatchAccountUpdate(d *schema.ResourceData, meta interface{}) err
 }
 
 func resourceArmBatchAccountDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).batchAccountClient
+	client := meta.(*ArmClient).batch.AccountClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
 	name := id.Path["batchAccounts"]
-	resourceGroupName := id.ResourceGroup
+	resourceGroup := id.ResourceGroup
 
-	future, err := client.Delete(ctx, resourceGroupName, name)
+	future, err := client.Delete(ctx, resourceGroup, name)
 	if err != nil {
-		return fmt.Errorf("Error deleting Batch account %q (Resource Group %q): %+v", name, resourceGroupName, err)
+		return fmt.Errorf("Error deleting Batch account %q (Resource Group %q): %+v", name, resourceGroup, err)
 	}
 
 	if err = future.WaitForCompletionRef(ctx, client.Client); err != nil {
 		if !response.WasNotFound(future.Response()) {
-			return fmt.Errorf("Error waiting for deletion of Batch account %q (Resource Group %q): %+v", name, resourceGroupName, err)
+			return fmt.Errorf("Error waiting for deletion of Batch account %q (Resource Group %q): %+v", name, resourceGroup, err)
 		}
 	}
 

@@ -1,14 +1,23 @@
 package azurerm
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"strconv"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/services/notificationhubs/mgmt/2017-04-01/notificationhubs"
+	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/helper/validation"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
+
+var notificationHubResourceName = "azurerm_notification_hub"
 
 const apnsProductionName = "Production"
 const apnsProductionEndpoint = "https://api.push.apple.com:443/3/device"
@@ -58,9 +67,9 @@ func resourceArmNotificationHub() *schema.Resource {
 				ForceNew: true,
 			},
 
-			"resource_group_name": resourceGroupNameSchema(),
+			"resource_group_name": azure.SchemaResourceGroupName(),
 
-			"location": locationSchema(),
+			"location": azure.SchemaLocation(),
 
 			"apns_credential": {
 				Type:     schema.TypeList,
@@ -118,19 +127,32 @@ func resourceArmNotificationHub() *schema.Resource {
 
 			// NOTE: skipping tags as there's a bug in the API where the Keys for Tags are returned in lower-case
 			// Azure Rest API Specs issue: https://github.com/Azure/azure-sdk-for-go/issues/2239
-			//"tags": tagsSchema(),
+			//"tags": tags.Schema(),
 		},
 	}
 }
 
 func resourceArmNotificationHubCreateUpdate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).notificationHubsClient
+	client := meta.(*ArmClient).notificationHubs.HubsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	name := d.Get("name").(string)
 	namespaceName := d.Get("namespace_name").(string)
 	resourceGroup := d.Get("resource_group_name").(string)
-	location := azureRMNormalizeLocation(d.Get("location").(string))
+	location := azure.NormalizeLocation(d.Get("location").(string))
+
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
+		existing, err := client.Get(ctx, resourceGroup, namespaceName, name)
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing Notification Hub %q (Namespace %q / Resource Group %q): %+v", name, namespaceName, resourceGroup, err)
+			}
+		}
+
+		if existing.ID != nil && *existing.ID != "" {
+			return tf.ImportAsExistsError("azurerm_notification_hub", *existing.ID)
+		}
+	}
 
 	apnsRaw := d.Get("apns_credential").([]interface{})
 	apnsCredential, err := expandNotificationHubsAPNSCredentials(apnsRaw)
@@ -156,10 +178,25 @@ func resourceArmNotificationHubCreateUpdate(d *schema.ResourceData, meta interfa
 		return fmt.Errorf("Error creating Notification Hub %q (Namespace %q / Resource Group %q): %+v", name, namespaceName, resourceGroup, err)
 	}
 
+	// Notification Hubs are eventually consistent
+	log.Printf("[DEBUG] Waiting for Notification Hub %q to become available", name)
+	stateConf := &resource.StateChangeConf{
+		Pending:                   []string{"404"},
+		Target:                    []string{"200"},
+		Refresh:                   notificationHubStateRefreshFunc(ctx, client, resourceGroup, namespaceName, name),
+		Timeout:                   10 * time.Minute,
+		MinTimeout:                15 * time.Second,
+		ContinuousTargetOccurence: 10,
+	}
+	if _, err2 := stateConf.WaitForState(); err2 != nil {
+		return fmt.Errorf("Error waiting for Notification Hub %q to become available: %s", name, err2)
+	}
+
 	read, err := client.Get(ctx, resourceGroup, namespaceName, name)
 	if err != nil {
 		return fmt.Errorf("Error retrieving Notification Hub %q (Namespace %q / Resource Group %q): %+v", name, namespaceName, resourceGroup, err)
 	}
+
 	if read.ID == nil {
 		return fmt.Errorf("Cannot read Notification Hub %q (Namespace %q / Resource Group %q) ID", name, namespaceName, resourceGroup)
 	}
@@ -169,11 +206,26 @@ func resourceArmNotificationHubCreateUpdate(d *schema.ResourceData, meta interfa
 	return resourceArmNotificationHubRead(d, meta)
 }
 
+func notificationHubStateRefreshFunc(ctx context.Context, client *notificationhubs.Client, resourceGroup, namespaceName, name string) resource.StateRefreshFunc {
+	return func() (interface{}, string, error) {
+		res, err := client.Get(ctx, resourceGroup, namespaceName, name)
+		if err != nil {
+			if utils.ResponseWasNotFound(res.Response) {
+				return nil, "404", nil
+			}
+
+			return nil, "", fmt.Errorf("Error retrieving Notification Hub %q (Namespace %q / Resource Group %q): %+v", name, namespaceName, resourceGroup, err)
+		}
+
+		return res, strconv.Itoa(res.StatusCode), nil
+	}
+}
+
 func resourceArmNotificationHubRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).notificationHubsClient
+	client := meta.(*ArmClient).notificationHubs.HubsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -201,18 +253,18 @@ func resourceArmNotificationHubRead(d *schema.ResourceData, meta interface{}) er
 	d.Set("namespace_name", namespaceName)
 	d.Set("resource_group_name", resourceGroup)
 	if location := resp.Location; location != nil {
-		d.Set("location", azureRMNormalizeLocation(*location))
+		d.Set("location", azure.NormalizeLocation(*location))
 	}
 
 	if props := credentials.PnsCredentialsProperties; props != nil {
 		apns := flattenNotificationHubsAPNSCredentials(props.ApnsCredential)
-		if d.Set("apns_credential", apns); err != nil {
-			return fmt.Errorf("Error setting `apns_credential`: %+v", err)
+		if setErr := d.Set("apns_credential", apns); setErr != nil {
+			return fmt.Errorf("Error setting `apns_credential`: %+v", setErr)
 		}
 
 		gcm := flattenNotificationHubsGCMCredentials(props.GcmCredential)
-		if d.Set("gcm_credential", gcm); err != nil {
-			return fmt.Errorf("Error setting `gcm_credential`: %+v", err)
+		if setErr := d.Set("gcm_credential", gcm); setErr != nil {
+			return fmt.Errorf("Error setting `gcm_credential`: %+v", setErr)
 		}
 	}
 
@@ -220,10 +272,10 @@ func resourceArmNotificationHubRead(d *schema.ResourceData, meta interface{}) er
 }
 
 func resourceArmNotificationHubDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).notificationHubsClient
+	client := meta.(*ArmClient).notificationHubs.HubsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}

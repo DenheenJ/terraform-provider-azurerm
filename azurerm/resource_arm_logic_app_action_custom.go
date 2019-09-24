@@ -56,7 +56,7 @@ func resourceArmLogicAppActionCustomCreateUpdate(d *schema.ResourceData, meta in
 		return fmt.Errorf("Error unmarshalling JSON for Custom Action %q: %+v", name, err)
 	}
 
-	if err := resourceLogicAppActionUpdate(d, meta, logicAppId, name, body); err != nil {
+	if err := resourceLogicAppActionUpdate(d, meta, logicAppId, name, body, "azurerm_logic_app_action_custom"); err != nil {
 		return err
 	}
 
@@ -64,7 +64,7 @@ func resourceArmLogicAppActionCustomCreateUpdate(d *schema.ResourceData, meta in
 }
 
 func resourceArmLogicAppActionCustomRead(d *schema.ResourceData, meta interface{}) error {
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -102,7 +102,7 @@ func resourceArmLogicAppActionCustomRead(d *schema.ResourceData, meta interface{
 }
 
 func resourceArmLogicAppActionCustomDelete(d *schema.ResourceData, meta interface{}) error {
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}

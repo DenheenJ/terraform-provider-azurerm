@@ -3,6 +3,7 @@ package azurerm
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/url"
@@ -12,6 +13,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/services/datalake/store/2016-11-01/filesystem"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/response"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
@@ -37,7 +40,7 @@ func resourceArmDataLakeStoreFile() *schema.Resource {
 				Type:         schema.TypeString,
 				Required:     true,
 				ForceNew:     true,
-				ValidateFunc: validateFilePath(),
+				ValidateFunc: validateDataLakeStoreRemoteFilePath(),
 			},
 
 			"local_file_path": {
@@ -50,8 +53,9 @@ func resourceArmDataLakeStoreFile() *schema.Resource {
 }
 
 func resourceArmDataLakeStoreFileCreate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).dataLakeStoreFilesClient
+	client := meta.(*ArmClient).datalake.StoreFilesClient
 	ctx := meta.(*ArmClient).StopContext
+	chunkSize := 4 * 1024 * 1024
 
 	log.Printf("[INFO] preparing arguments for Date Lake Store File creation.")
 
@@ -59,31 +63,56 @@ func resourceArmDataLakeStoreFileCreate(d *schema.ResourceData, meta interface{}
 	remoteFilePath := d.Get("remote_file_path").(string)
 	localFilePath := d.Get("local_file_path").(string)
 
+	// example.azuredatalakestore.net/test/example.txt
+	id := fmt.Sprintf("%s.%s%s", accountName, client.AdlsFileSystemDNSSuffix, remoteFilePath)
+
+	if features.ShouldResourcesBeImported() {
+		existing, err := client.GetFileStatus(ctx, accountName, remoteFilePath, utils.Bool(true))
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing Data Lake Store File %q (Account %q): %s", remoteFilePath, accountName, err)
+			}
+		}
+
+		if existing.FileStatus != nil && existing.FileStatus.ModificationTime != nil {
+			return tf.ImportAsExistsError("azurerm_data_lake_store_file", id)
+		}
+	}
+
 	file, err := os.Open(localFilePath)
 	if err != nil {
 		return fmt.Errorf("error opening file %q: %+v", localFilePath, err)
 	}
 	defer utils.IoCloseAndLogError(file, fmt.Sprintf("Error closing Data Lake Store File %q", localFilePath))
 
-	// Read the file contents
-	fileContents, err := ioutil.ReadAll(file)
-	if err != nil {
-		return err
-	}
-
-	_, err = client.Create(ctx, accountName, remoteFilePath, ioutil.NopCloser(bytes.NewReader(fileContents)), utils.Bool(false), filesystem.CLOSE, nil, nil)
-	if err != nil {
+	if _, err = client.Create(ctx, accountName, remoteFilePath, nil, nil, filesystem.DATA, nil, nil); err != nil {
 		return fmt.Errorf("Error issuing create request for Data Lake Store File %q : %+v", remoteFilePath, err)
 	}
 
-	// example.azuredatalakestore.net/test/example.txt
-	id := fmt.Sprintf("%s.%s%s", accountName, client.AdlsFileSystemDNSSuffix, remoteFilePath)
+	buffer := make([]byte, chunkSize)
+	for {
+		n, err := file.Read(buffer)
+		if err == io.EOF {
+			break
+		}
+		flag := filesystem.DATA
+		if n < chunkSize {
+			// last chunk
+			flag = filesystem.CLOSE
+		}
+		chunk := ioutil.NopCloser(bytes.NewReader(buffer[:n]))
+
+		if _, err = client.Append(ctx, accountName, remoteFilePath, chunk, nil, flag, nil, nil); err != nil {
+			return fmt.Errorf("Error transferring chunk for Data Lake Store File %q : %+v", remoteFilePath, err)
+		}
+	}
+
 	d.SetId(id)
 	return resourceArmDataLakeStoreFileRead(d, meta)
 }
 
 func resourceArmDataLakeStoreFileRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).dataLakeStoreFilesClient
+	client := meta.(*ArmClient).datalake.StoreFilesClient
 	ctx := meta.(*ArmClient).StopContext
 
 	id, err := parseDataLakeStoreFileId(d.Id(), client.AdlsFileSystemDNSSuffix)
@@ -109,7 +138,7 @@ func resourceArmDataLakeStoreFileRead(d *schema.ResourceData, meta interface{}) 
 }
 
 func resourceArmDataLakeStoreFileDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).dataLakeStoreFilesClient
+	client := meta.(*ArmClient).datalake.StoreFilesClient
 	ctx := meta.(*ArmClient).StopContext
 
 	id, err := parseDataLakeStoreFileId(d.Id(), client.AdlsFileSystemDNSSuffix)
@@ -150,4 +179,16 @@ func parseDataLakeStoreFileId(input string, suffix string) (*dataLakeStoreFileId
 		filePath:           uri.Path,
 	}
 	return &file, nil
+}
+
+func validateDataLakeStoreRemoteFilePath() schema.SchemaValidateFunc {
+	return func(v interface{}, k string) (warnings []string, errors []error) {
+		val := v.(string)
+
+		if !strings.HasPrefix(val, "/") {
+			errors = append(errors, fmt.Errorf("%q must start with `/`", k))
+		}
+
+		return warnings, errors
+	}
 }

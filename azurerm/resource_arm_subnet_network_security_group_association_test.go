@@ -4,15 +4,17 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
 func TestAccAzureRMSubnetNetworkSecurityGroupAssociation_basic(t *testing.T) {
 	resourceName := "azurerm_subnet_network_security_group_association.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	location := testLocation()
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -36,9 +38,39 @@ func TestAccAzureRMSubnetNetworkSecurityGroupAssociation_basic(t *testing.T) {
 	})
 }
 
+func TestAccAzureRMSubnetNetworkSecurityGroupAssociation_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
+
+	resourceName := "azurerm_subnet_network_security_group_association.test"
+	ri := tf.AccRandTimeInt()
+	location := testLocation()
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:  func() { testAccPreCheck(t) },
+		Providers: testAccProviders,
+		// intentional as this is a Virtual Resource
+		CheckDestroy: testCheckAzureRMSubnetDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMSubnetNetworkSecurityGroupAssociation_basic(ri, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMSubnetNetworkSecurityGroupAssociationExists(resourceName),
+				),
+			},
+			{
+				Config:      testAccAzureRMSubnetNetworkSecurityGroupAssociation_requiresImport(ri, location),
+				ExpectError: testRequiresImportError("azurerm_subnet_network_security_group_association"),
+			},
+		},
+	})
+}
+
 func TestAccAzureRMSubnetNetworkSecurityGroupAssociation_deleted(t *testing.T) {
 	resourceName := "azurerm_subnet_network_security_group_association.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	location := testLocation()
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -60,16 +92,16 @@ func TestAccAzureRMSubnetNetworkSecurityGroupAssociation_deleted(t *testing.T) {
 	})
 }
 
-func testCheckAzureRMSubnetNetworkSecurityGroupAssociationExists(name string) resource.TestCheckFunc {
+func testCheckAzureRMSubnetNetworkSecurityGroupAssociationExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		subnetId := rs.Primary.Attributes["subnet_id"]
-		parsedId, err := parseAzureResourceID(subnetId)
+		parsedId, err := azure.ParseAzureResourceID(subnetId)
 		if err != nil {
 			return err
 		}
@@ -78,7 +110,7 @@ func testCheckAzureRMSubnetNetworkSecurityGroupAssociationExists(name string) re
 		virtualNetworkName := parsedId.Path["virtualNetworks"]
 		subnetName := parsedId.Path["subnets"]
 
-		client := testAccProvider.Meta().(*ArmClient).subnetClient
+		client := testAccProvider.Meta().(*ArmClient).network.SubnetsClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 		resp, err := client.Get(ctx, resourceGroupName, virtualNetworkName, subnetName, "")
 		if err != nil {
@@ -102,16 +134,16 @@ func testCheckAzureRMSubnetNetworkSecurityGroupAssociationExists(name string) re
 	}
 }
 
-func testCheckAzureRMSubnetNetworkSecurityGroupAssociationDisappears(name string) resource.TestCheckFunc {
+func testCheckAzureRMSubnetNetworkSecurityGroupAssociationDisappears(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		subnetId := rs.Primary.Attributes["subnet_id"]
-		parsedId, err := parseAzureResourceID(subnetId)
+		parsedId, err := azure.ParseAzureResourceID(subnetId)
 		if err != nil {
 			return err
 		}
@@ -120,7 +152,7 @@ func testCheckAzureRMSubnetNetworkSecurityGroupAssociationDisappears(name string
 		virtualNetworkName := parsedId.Path["virtualNetworks"]
 		subnetName := parsedId.Path["subnets"]
 
-		client := testAccProvider.Meta().(*ArmClient).subnetClient
+		client := testAccProvider.Meta().(*ArmClient).network.SubnetsClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 		read, err := client.Get(ctx, resourceGroup, virtualNetworkName, subnetName, "")
 		if err != nil {
@@ -143,16 +175,16 @@ func testCheckAzureRMSubnetNetworkSecurityGroupAssociationDisappears(name string
 	}
 }
 
-func testCheckAzureRMSubnetHasNoNetworkSecurityGroup(name string) resource.TestCheckFunc {
+func testCheckAzureRMSubnetHasNoNetworkSecurityGroup(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
 		subnetId := rs.Primary.Attributes["subnet_id"]
-		parsedId, err := parseAzureResourceID(subnetId)
+		parsedId, err := azure.ParseAzureResourceID(subnetId)
 		if err != nil {
 			return err
 		}
@@ -161,7 +193,7 @@ func testCheckAzureRMSubnetHasNoNetworkSecurityGroup(name string) resource.TestC
 		virtualNetworkName := parsedId.Path["virtualNetworks"]
 		subnetName := parsedId.Path["subnets"]
 
-		client := testAccProvider.Meta().(*ArmClient).subnetClient
+		client := testAccProvider.Meta().(*ArmClient).network.SubnetsClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 		resp, err := client.Get(ctx, resourceGroupName, virtualNetworkName, subnetName, "")
 		if err != nil {
@@ -230,4 +262,12 @@ resource "azurerm_subnet_network_security_group_association" "test" {
   network_security_group_id = "${azurerm_network_security_group.test.id}"
 }
 `, rInt, location, rInt, rInt, rInt)
+}
+
+func testAccAzureRMSubnetNetworkSecurityGroupAssociation_requiresImport(rInt int, location string) string {
+	template := testAccAzureRMSubnetNetworkSecurityGroupAssociation_basic(rInt, location)
+	return fmt.Sprintf(`
+%s
+
+`, template)
 }

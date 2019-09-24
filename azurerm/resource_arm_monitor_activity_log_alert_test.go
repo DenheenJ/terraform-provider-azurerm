@@ -9,12 +9,14 @@ import (
 	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 )
 
 func TestAccAzureRMMonitorActivityLogAlert_basic(t *testing.T) {
 	resourceName := "azurerm_monitor_activity_log_alert.test"
-	ri := acctest.RandInt()
-	config := testAccAzureRMMonitorActivityLogAlert_basic(ri, testLocation())
+	ri := tf.AccRandTimeInt()
+	location := testLocation()
 
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -22,7 +24,7 @@ func TestAccAzureRMMonitorActivityLogAlert_basic(t *testing.T) {
 		CheckDestroy: testCheckAzureRMMonitorActivityLogAlertDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: config,
+				Config: testAccAzureRMMonitorActivityLogAlert_basic(ri, location),
 				Check: resource.ComposeTestCheckFunc(
 					testCheckAzureRMMonitorActivityLogAlertExists(resourceName),
 					resource.TestCheckResourceAttr(resourceName, "enabled", "true"),
@@ -41,9 +43,38 @@ func TestAccAzureRMMonitorActivityLogAlert_basic(t *testing.T) {
 	})
 }
 
+func TestAccAzureRMMonitorActivityLogAlert_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
+
+	resourceName := "azurerm_monitor_activity_log_alert.test"
+	ri := tf.AccRandTimeInt()
+	location := testLocation()
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testCheckAzureRMMonitorActivityLogAlertDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMMonitorActivityLogAlert_basic(ri, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMMonitorActivityLogAlertExists(resourceName),
+				),
+			},
+			{
+				Config:      testAccAzureRMMonitorActivityLogAlert_requiresImport(ri, location),
+				ExpectError: testRequiresImportError("azurerm_monitor_activity_log_alert"),
+			},
+		},
+	})
+}
+
 func TestAccAzureRMMonitorActivityLogAlert_singleResource(t *testing.T) {
 	resourceName := "azurerm_monitor_activity_log_alert.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	config := testAccAzureRMMonitorActivityLogAlert_singleResource(ri, rs, testLocation())
 
@@ -76,7 +107,7 @@ func TestAccAzureRMMonitorActivityLogAlert_singleResource(t *testing.T) {
 
 func TestAccAzureRMMonitorActivityLogAlert_complete(t *testing.T) {
 	resourceName := "azurerm_monitor_activity_log_alert.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	config := testAccAzureRMMonitorActivityLogAlert_complete(ri, rs, testLocation())
 
@@ -116,7 +147,7 @@ func TestAccAzureRMMonitorActivityLogAlert_complete(t *testing.T) {
 
 func TestAccAzureRMMonitorActivityLogAlert_basicAndCompleteUpdate(t *testing.T) {
 	resourceName := "azurerm_monitor_activity_log_alert.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	rs := strings.ToLower(acctest.RandString(11))
 	location := testLocation()
 	basicConfig := testAccAzureRMMonitorActivityLogAlert_basic(ri, location)
@@ -200,6 +231,23 @@ resource "azurerm_monitor_activity_log_alert" "test" {
   }
 }
 `, rInt, location, rInt)
+}
+
+func testAccAzureRMMonitorActivityLogAlert_requiresImport(rInt int, location string) string {
+	template := testAccAzureRMMonitorActivityLogAlert_basic(rInt, location)
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_monitor_activity_log_alert" "import" {
+  name                = "${azurerm_monitor_activity_log_alert.test.name}"
+  resource_group_name = "${azurerm_monitor_activity_log_alert.test.resource_group_name}"
+  scopes              = ["${azurerm_resource_group.test.id}"]
+
+  criteria {
+    category = "Recommendation"
+  }
+}
+`, template)
 }
 
 func testAccAzureRMMonitorActivityLogAlert_singleResource(rInt int, rString, location string) string {
@@ -298,7 +346,7 @@ resource "azurerm_monitor_activity_log_alert" "test" {
   action {
     action_group_id = "${azurerm_monitor_action_group.test2.id}"
 
-    webhook_properties {
+    webhook_properties = {
       from = "terraform test"
       to   = "microsoft azure"
     }
@@ -308,7 +356,7 @@ resource "azurerm_monitor_activity_log_alert" "test" {
 }
 
 func testCheckAzureRMMonitorActivityLogAlertDestroy(s *terraform.State) error {
-	conn := testAccProvider.Meta().(*ArmClient).monitorActivityLogAlertsClient
+	conn := testAccProvider.Meta().(*ArmClient).monitor.ActivityLogAlertsClient
 	ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 	for _, rs := range s.RootModule().Resources {
@@ -333,30 +381,30 @@ func testCheckAzureRMMonitorActivityLogAlertDestroy(s *terraform.State) error {
 	return nil
 }
 
-func testCheckAzureRMMonitorActivityLogAlertExists(name string) resource.TestCheckFunc {
+func testCheckAzureRMMonitorActivityLogAlertExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
-		resourceName := rs.Primary.Attributes["name"]
+		name := rs.Primary.Attributes["name"]
 		resourceGroup, hasResourceGroup := rs.Primary.Attributes["resource_group_name"]
 		if !hasResourceGroup {
-			return fmt.Errorf("Bad: no resource group found in state for Activity Log Alert Instance: %s", resourceName)
+			return fmt.Errorf("Bad: no resource group found in state for Activity Log Alert Instance: %s", name)
 		}
 
-		conn := testAccProvider.Meta().(*ArmClient).monitorActivityLogAlertsClient
+		conn := testAccProvider.Meta().(*ArmClient).monitor.ActivityLogAlertsClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
-		resp, err := conn.Get(ctx, resourceGroup, resourceName)
+		resp, err := conn.Get(ctx, resourceGroup, name)
 		if err != nil {
 			return fmt.Errorf("Bad: Get on monitorActivityLogAlertsClient: %+v", err)
 		}
 
 		if resp.StatusCode == http.StatusNotFound {
-			return fmt.Errorf("Bad: Activity Log Alert Instance %q (resource group: %q) does not exist", resourceName, resourceGroup)
+			return fmt.Errorf("Bad: Activity Log Alert Instance %q (resource group: %q) does not exist", name, resourceGroup)
 		}
 
 		return nil

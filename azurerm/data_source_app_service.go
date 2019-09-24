@@ -5,6 +5,7 @@ import (
 
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/tags"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
@@ -19,16 +20,16 @@ func dataSourceArmAppService() *schema.Resource {
 				ForceNew: true,
 			},
 
-			"resource_group_name": resourceGroupNameDiffSuppressSchema(),
+			"resource_group_name": azure.SchemaResourceGroupNameDiffSuppress(),
 
-			"location": locationForDataSourceSchema(),
+			"location": azure.SchemaLocationForDataSource(),
 
 			"app_service_plan_id": {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
 
-			"site_config": azure.SchemaAppServiceSiteConfig(),
+			"site_config": azure.SchemaAppServiceDataSourceSiteConfig(),
 
 			"client_affinity_enabled": {
 				Type:     schema.TypeBool,
@@ -45,9 +46,17 @@ func dataSourceArmAppService() *schema.Resource {
 				Computed: true,
 			},
 
+			"client_cert_enabled": {
+				Type:     schema.TypeBool,
+				Computed: true,
+			},
+
 			"app_settings": {
 				Type:     schema.TypeMap,
 				Computed: true,
+				Elem: &schema.Schema{
+					Type: schema.TypeString,
+				},
 			},
 
 			"connection_string": {
@@ -60,8 +69,9 @@ func dataSourceArmAppService() *schema.Resource {
 							Computed: true,
 						},
 						"value": {
-							Type:     schema.TypeString,
-							Computed: true,
+							Type:      schema.TypeString,
+							Sensitive: true,
+							Computed:  true,
 						},
 						"type": {
 							Type:     schema.TypeString,
@@ -71,7 +81,7 @@ func dataSourceArmAppService() *schema.Resource {
 				},
 			},
 
-			"tags": tagsForDataSourceSchema(),
+			"tags": tags.SchemaDataSource(),
 
 			"site_credential": {
 				Type:     schema.TypeList,
@@ -101,6 +111,11 @@ func dataSourceArmAppService() *schema.Resource {
 				Computed: true,
 			},
 
+			"possible_outbound_ip_addresses": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+
 			"source_control": {
 				Type:     schema.TypeList,
 				Computed: true,
@@ -121,7 +136,7 @@ func dataSourceArmAppService() *schema.Resource {
 	}
 }
 func dataSourceArmAppServiceRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).appServicesClient
+	client := meta.(*ArmClient).web.AppServicesClient
 
 	resourceGroup := d.Get("resource_group_name").(string)
 	name := d.Get("name").(string)
@@ -163,7 +178,7 @@ func dataSourceArmAppServiceRead(d *schema.ResourceData, meta interface{}) error
 	if err != nil {
 		return err
 	}
-	siteCredResp, err := siteCredFuture.Result(client)
+	siteCredResp, err := siteCredFuture.Result(*client)
 	if err != nil {
 		return fmt.Errorf("Error making Read request on AzureRM App Service Site Credential %q: %+v", name, err)
 	}
@@ -173,7 +188,7 @@ func dataSourceArmAppServiceRead(d *schema.ResourceData, meta interface{}) error
 	d.Set("name", name)
 	d.Set("resource_group_name", resourceGroup)
 	if location := resp.Location; location != nil {
-		d.Set("location", azureRMNormalizeLocation(*location))
+		d.Set("location", azure.NormalizeLocation(*location))
 	}
 
 	if props := resp.SiteProperties; props != nil {
@@ -181,8 +196,10 @@ func dataSourceArmAppServiceRead(d *schema.ResourceData, meta interface{}) error
 		d.Set("client_affinity_enabled", props.ClientAffinityEnabled)
 		d.Set("enabled", props.Enabled)
 		d.Set("https_only", props.HTTPSOnly)
+		d.Set("client_cert_enabled", props.ClientCertEnabled)
 		d.Set("default_site_hostname", props.DefaultHostName)
 		d.Set("outbound_ip_addresses", props.OutboundIPAddresses)
+		d.Set("possible_outbound_ip_addresses", props.PossibleOutboundIPAddresses)
 	}
 
 	if err := d.Set("app_settings", flattenAppServiceAppSettings(appSettingsResp.Properties)); err != nil {
@@ -207,7 +224,5 @@ func dataSourceArmAppServiceRead(d *schema.ResourceData, meta interface{}) error
 		return err
 	}
 
-	flattenAndSetTags(d, resp.Tags)
-
-	return nil
+	return tags.FlattenAndSet(d, resp.Tags)
 }

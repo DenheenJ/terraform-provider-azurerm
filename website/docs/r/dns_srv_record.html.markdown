@@ -3,7 +3,7 @@ layout: "azurerm"
 page_title: "Azure Resource Manager: azurerm_dns_srv_record"
 sidebar_current: "docs-azurerm-resource-dns-srv-record"
 description: |-
-  Manage a DNS SRV Record.
+  Manages a DNS SRV Record.
 ---
 
 # azurerm_dns_srv_record
@@ -36,7 +36,7 @@ resource "azurerm_dns_srv_record" "test" {
     target   = "target1.contoso.com"
   }
 
-  tags {
+  tags = {
     Environment = "Production"
   }
 }
@@ -79,5 +79,5 @@ The following attributes are exported:
 SRV records can be imported using the `resource id`, e.g.
 
 ```shell
-terraform import azurerm_dns_srv_record.test /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/mygroup1/providers/Microsoft.Network/dnsZones/zone1/SRV/myrecord1
+terraform import azurerm_dns_srv_record.test /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/mygroup1/providers/Microsoft.Network/dnszones/zone1/SRV/myrecord1
 ```

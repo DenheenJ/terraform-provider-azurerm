@@ -15,6 +15,12 @@ var servicePrincipalResourceName = "azurerm_service_principal"
 
 func resourceArmActiveDirectoryServicePrincipal() *schema.Resource {
 	return &schema.Resource{
+		DeprecationMessage: `The Azure Active Directory resources have been split out into their own Provider.
+
+Information on migrating to the new AzureAD Provider can be found here: https://terraform.io/docs/providers/azurerm/guides/migrating-to-azuread.html
+
+As such the Azure Active Directory resources within the AzureRM Provider are now deprecated and will be removed in v2.0 of the AzureRM Provider.
+`,
 		Create: resourceArmActiveDirectoryServicePrincipalCreate,
 		Read:   resourceArmActiveDirectoryServicePrincipalRead,
 		Delete: resourceArmActiveDirectoryServicePrincipalDelete,
@@ -37,7 +43,7 @@ func resourceArmActiveDirectoryServicePrincipal() *schema.Resource {
 }
 
 func resourceArmActiveDirectoryServicePrincipalCreate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).servicePrincipalsClient
+	client := meta.(*ArmClient).graph.ServicePrincipalsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	applicationId := d.Get("application_id").(string)
@@ -87,7 +93,7 @@ func resourceArmActiveDirectoryServicePrincipalCreate(d *schema.ResourceData, me
 }
 
 func resourceArmActiveDirectoryServicePrincipalRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).servicePrincipalsClient
+	client := meta.(*ArmClient).graph.ServicePrincipalsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	objectId := d.Id()
@@ -108,7 +114,7 @@ func resourceArmActiveDirectoryServicePrincipalRead(d *schema.ResourceData, meta
 }
 
 func resourceArmActiveDirectoryServicePrincipalDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).servicePrincipalsClient
+	client := meta.(*ArmClient).graph.ServicePrincipalsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	applicationId := d.Id()

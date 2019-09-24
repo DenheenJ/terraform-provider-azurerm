@@ -6,8 +6,12 @@ import (
 	"github.com/Azure/azure-sdk-for-go/services/preview/monitor/mgmt/2018-03-01/insights"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/helper/validation"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/response"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/validate"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/tags"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/utils"
 )
 
@@ -29,7 +33,7 @@ func resourceArmMonitorActionGroup() *schema.Resource {
 				ValidateFunc: validate.NoEmptyStrings,
 			},
 
-			"resource_group_name": resourceGroupNameSchema(),
+			"resource_group_name": azure.SchemaResourceGroupName(),
 
 			"short_name": {
 				Type:         schema.TypeString,
@@ -105,17 +109,30 @@ func resourceArmMonitorActionGroup() *schema.Resource {
 				},
 			},
 
-			"tags": tagsSchema(),
+			"tags": tags.Schema(),
 		},
 	}
 }
 
 func resourceArmMonitorActionGroupCreateUpdate(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).monitorActionGroupsClient
+	client := meta.(*ArmClient).monitor.ActionGroupsClient
 	ctx := meta.(*ArmClient).StopContext
 
 	name := d.Get("name").(string)
 	resGroup := d.Get("resource_group_name").(string)
+
+	if features.ShouldResourcesBeImported() && d.IsNewResource() {
+		existing, err := client.Get(ctx, resGroup, name)
+		if err != nil {
+			if !utils.ResponseWasNotFound(existing.Response) {
+				return fmt.Errorf("Error checking for presence of existing Monitor Action Group Service Plan %q (Resource Group %q): %s", name, resGroup, err)
+			}
+		}
+
+		if existing.ID != nil && *existing.ID != "" {
+			return tf.ImportAsExistsError("azurerm_monitor_action_group", *existing.ID)
+		}
+	}
 
 	shortName := d.Get("short_name").(string)
 	enabled := d.Get("enabled").(bool)
@@ -124,11 +141,11 @@ func resourceArmMonitorActionGroupCreateUpdate(d *schema.ResourceData, meta inte
 	smsReceiversRaw := d.Get("sms_receiver").([]interface{})
 	webhookReceiversRaw := d.Get("webhook_receiver").([]interface{})
 
-	tags := d.Get("tags").(map[string]interface{})
-	expandedTags := expandTags(tags)
+	t := d.Get("tags").(map[string]interface{})
+	expandedTags := tags.Expand(t)
 
 	parameters := insights.ActionGroupResource{
-		Location: utils.String(azureRMNormalizeLocation("Global")),
+		Location: utils.String(azure.NormalizeLocation("Global")),
 		ActionGroup: &insights.ActionGroup{
 			GroupShortName:   utils.String(shortName),
 			Enabled:          utils.Bool(enabled),
@@ -157,10 +174,10 @@ func resourceArmMonitorActionGroupCreateUpdate(d *schema.ResourceData, meta inte
 }
 
 func resourceArmMonitorActionGroupRead(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).monitorActionGroupsClient
+	client := meta.(*ArmClient).monitor.ActionGroupsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}
@@ -196,16 +213,14 @@ func resourceArmMonitorActionGroupRead(d *schema.ResourceData, meta interface{})
 		}
 	}
 
-	flattenAndSetTags(d, resp.Tags)
-
-	return nil
+	return tags.FlattenAndSet(d, resp.Tags)
 }
 
 func resourceArmMonitorActionGroupDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*ArmClient).monitorActionGroupsClient
+	client := meta.(*ArmClient).monitor.ActionGroupsClient
 	ctx := meta.(*ArmClient).StopContext
 
-	id, err := parseAzureResourceID(d.Id())
+	id, err := azure.ParseAzureResourceID(d.Id())
 	if err != nil {
 		return err
 	}

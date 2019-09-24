@@ -4,16 +4,17 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-08-01/network"
-	"github.com/hashicorp/terraform/helper/acctest"
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2019-06-01/network"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
 	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/azure"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/helpers/tf"
+	"github.com/terraform-providers/terraform-provider-azurerm/azurerm/internal/features"
 )
 
 func TestAccAzureRMNetworkInterfaceBackendAddressPoolAssociation_basic(t *testing.T) {
 	resourceName := "azurerm_network_interface_backend_address_pool_association.test"
-	rInt := acctest.RandInt()
+	rInt := tf.AccRandTimeInt()
 	resource.ParallelTest(t, resource.TestCase{
 		PreCheck:  func() { testAccPreCheck(t) },
 		Providers: testAccProviders,
@@ -30,9 +31,38 @@ func TestAccAzureRMNetworkInterfaceBackendAddressPoolAssociation_basic(t *testin
 	})
 }
 
+func TestAccAzureRMNetworkInterfaceBackendAddressPoolAssociation_requiresImport(t *testing.T) {
+	if !features.ShouldResourcesBeImported() {
+		t.Skip("Skipping since resources aren't required to be imported")
+		return
+	}
+
+	resourceName := "azurerm_network_interface_backend_address_pool_association.test"
+	rInt := tf.AccRandTimeInt()
+	location := testLocation()
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:  func() { testAccPreCheck(t) },
+		Providers: testAccProviders,
+		// intentional as this is a Virtual Resource
+		CheckDestroy: testCheckAzureRMNetworkInterfaceDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAzureRMNetworkInterfaceBackendAddressPoolAssociation_basic(rInt, location),
+				Check: resource.ComposeTestCheckFunc(
+					testCheckAzureRMNetworkInterfaceBackendAddressPoolAssociationExists(resourceName),
+				),
+			},
+			{
+				Config:      testAccAzureRMNetworkInterfaceBackendAddressPoolAssociation_requiresImport(rInt, location),
+				ExpectError: testRequiresImportError("azurerm_network_interface_backend_address_pool_association"),
+			},
+		},
+	})
+}
+
 func TestAccAzureRMNetworkInterfaceBackendAddressPoolAssociation_deleted(t *testing.T) {
 	resourceName := "azurerm_network_interface_backend_address_pool_association.test"
-	ri := acctest.RandInt()
+	ri := tf.AccRandTimeInt()
 	location := testLocation()
 
 	resource.ParallelTest(t, resource.TestCase{
@@ -53,15 +83,15 @@ func TestAccAzureRMNetworkInterfaceBackendAddressPoolAssociation_deleted(t *test
 	})
 }
 
-func testCheckAzureRMNetworkInterfaceBackendAddressPoolAssociationExists(name string) resource.TestCheckFunc {
+func testCheckAzureRMNetworkInterfaceBackendAddressPoolAssociationExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
-		nicID, err := parseAzureResourceID(rs.Primary.Attributes["network_interface_id"])
+		nicID, err := azure.ParseAzureResourceID(rs.Primary.Attributes["network_interface_id"])
 		if err != nil {
 			return err
 		}
@@ -71,7 +101,7 @@ func testCheckAzureRMNetworkInterfaceBackendAddressPoolAssociationExists(name st
 		backendAddressPoolId := rs.Primary.Attributes["backend_address_pool_id"]
 		ipConfigurationName := rs.Primary.Attributes["ip_configuration_name"]
 
-		client := testAccProvider.Meta().(*ArmClient).ifaceClient
+		client := testAccProvider.Meta().(*ArmClient).network.InterfacesClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		read, err := client.Get(ctx, resourceGroup, nicName, "")
@@ -103,15 +133,15 @@ func testCheckAzureRMNetworkInterfaceBackendAddressPoolAssociationExists(name st
 	}
 }
 
-func testCheckAzureRMNetworkInterfaceBackendAddressPoolAssociationDisappears(name string) resource.TestCheckFunc {
+func testCheckAzureRMNetworkInterfaceBackendAddressPoolAssociationDisappears(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		// Ensure we have enough information in state to look up in API
-		rs, ok := s.RootModule().Resources[name]
+		rs, ok := s.RootModule().Resources[resourceName]
 		if !ok {
-			return fmt.Errorf("Not found: %s", name)
+			return fmt.Errorf("Not found: %s", resourceName)
 		}
 
-		nicID, err := parseAzureResourceID(rs.Primary.Attributes["network_interface_id"])
+		nicID, err := azure.ParseAzureResourceID(rs.Primary.Attributes["network_interface_id"])
 		if err != nil {
 			return err
 		}
@@ -121,7 +151,7 @@ func testCheckAzureRMNetworkInterfaceBackendAddressPoolAssociationDisappears(nam
 		backendAddressPoolId := rs.Primary.Attributes["backend_address_pool_id"]
 		ipConfigurationName := rs.Primary.Attributes["ip_configuration_name"]
 
-		client := testAccProvider.Meta().(*ArmClient).ifaceClient
+		client := testAccProvider.Meta().(*ArmClient).network.InterfacesClient
 		ctx := testAccProvider.Meta().(*ArmClient).StopContext
 
 		read, err := client.Get(ctx, resourceGroup, nicName, "")
@@ -180,10 +210,10 @@ resource "azurerm_subnet" "test" {
 }
 
 resource "azurerm_public_ip" "test" {
-  name                         = "test-ip-%d"
-  location                     = "${azurerm_resource_group.test.location}"
-  resource_group_name          = "${azurerm_resource_group.test.name}"
-  public_ip_address_allocation = "static"
+  name                = "test-ip-%d"
+  location            = "${azurerm_resource_group.test.location}"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  allocation_method   = "Static"
 }
 
 resource "azurerm_lb" "test" {
@@ -212,7 +242,7 @@ resource "azurerm_network_interface" "test" {
   ip_configuration {
     name                          = "testconfiguration1"
     subnet_id                     = "${azurerm_subnet.test.id}"
-    private_ip_address_allocation = "dynamic"
+    private_ip_address_allocation = "Dynamic"
   }
 }
 
@@ -222,4 +252,17 @@ resource "azurerm_network_interface_backend_address_pool_association" "test" {
   backend_address_pool_id = "${azurerm_lb_backend_address_pool.test.id}"
 }
 `, rInt, location, rInt, rInt, rInt, rInt)
+}
+
+func testAccAzureRMNetworkInterfaceBackendAddressPoolAssociation_requiresImport(rInt int, location string) string {
+	template := testAccAzureRMNetworkInterfaceBackendAddressPoolAssociation_basic(rInt, location)
+	return fmt.Sprintf(`
+%s
+
+resource "azurerm_network_interface_backend_address_pool_association" "import" {
+  network_interface_id    = "${azurerm_network_interface_backend_address_pool_association.test.network_interface_id}"
+  ip_configuration_name   = "${azurerm_network_interface_backend_address_pool_association.test.ip_configuration_name}"
+  backend_address_pool_id = "${azurerm_network_interface_backend_address_pool_association.test.backend_address_pool_id}"
+}
+`, template)
 }
